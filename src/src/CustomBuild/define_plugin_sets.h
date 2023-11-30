@@ -1357,6 +1357,12 @@ To create/register a plugin, you have to :
     #define USES_P073   // 7DGT
     #define USES_P079   // Wemos Motoshield
 
+    #define USES_P155   // Smartmeter (Stromzaehler auslesen)
+    #define USES_P156   // Kostal (Wechselrichter ueber Modbus auslesen)
+    #define USES_P157   // Varta (Speicher ueber Modbus auslesen)
+    #define USES_P158   // I²C Analog Out
+    //#define USES_P999   // WaterLevel
+
     #if !defined(USES_P152) && (defined(ESP32_CLASSIC) || defined(ESP32S2)) // Only supported on ESP32 and ESP32-S2
       #define USES_P152 // ESP32 DAC
     #endif
@@ -1379,6 +1385,7 @@ To create/register a plugin, you have to :
     #define USES_C009   // FHEM HTTP
     #define USES_C010   // Generic UDP
     #define USES_C013   // ESPEasy P2P network
+    #define USES_C020   // S7 Kommunikation
 #endif
 
 
@@ -1709,49 +1716,49 @@ To create/register a plugin, you have to :
   #endif
   #define FEATURE_RTTTL 1
 
-  #define USES_P001   // Switch
-  #define USES_P002   // ADC
-  #define USES_P003   // Pulse
-  #define USES_P004   // Dallas
-  #define USES_P005   // DHT
-  #define USES_P006   // BMP085
+    #define USES_P001   // Switch
+    #define USES_P002   // ADC
+    #define USES_P003   // Pulse
+    #define USES_P004   // Dallas
+    #define USES_P005   // DHT
+    #define USES_P006   // BMP085
 
-  #define USES_P010   // BH1750
-  #define USES_P011   // PME
-  #define USES_P012   // LCD
-  #define USES_P013   // HCSR04
-  #define USES_P014   // SI7021
-  #define USES_P015   // TSL2561
-  #define USES_P018   // Dust
-  #define USES_P019   // PCF8574
+    #define USES_P010   // BH1750
+    #define USES_P011   // PME
+    #define USES_P012   // LCD
+    #define USES_P013   // HCSR04
+    #define USES_P014   // SI7021
+    #define USES_P015   // TSL2561
+    #define USES_P018   // Dust
+    #define USES_P019   // PCF8574
 
-  #define USES_P021   // Level
-  #define USES_P023   // OLED
-  #define USES_P024   // MLX90614
+    #define USES_P021   // Level
+    #define USES_P023   // OLED
+    #define USES_P024   // MLX90614
   #define USES_P025   // ADS1x15
-  #define USES_P026   // SysInfo
-  #define USES_P028   // BME280
-  #define USES_P029   // Output
+    #define USES_P026   // SysInfo
+    #define USES_P028   // BME280
+    #define USES_P029   // Output
 
-  #define USES_P031   // SHT1X
-  #define USES_P032   // MS5611
-  #define USES_P033   // Dummy
-  #define USES_P034   // DHT12
-  #define USES_P036   // FrameOLED
-  #define USES_P037   // MQTTImport
-  #define USES_P038   // NeoPixel
-  #define USES_P039   // Environment - Thermocouple
+    #define USES_P031   // SHT1X
+    #define USES_P032   // MS5611
+    #define USES_P033   // Dummy
+    #define USES_P034   // DHT12
+    #define USES_P036   // FrameOLED
+    #define USES_P037   // MQTTImport
+    #define USES_P038   // NeoPixel
+    #define USES_P039   // Environment - Thermocouple
 
-  #define USES_P043   // ClkOutput
-  #define USES_P044   // P1WifiGateway
-  #define USES_P049   // MHZ19
+    #define USES_P043   // ClkOutput
+    #define USES_P044   // P1WifiGateway
+    #define USES_P049   // MHZ19
 
-  #define USES_P052   // SenseAir
-  #define USES_P053   // PMSx003
-  #define USES_P056   // SDS011-Dust
-  #define USES_P059   // Encoder
+    #define USES_P052   // SenseAir
+    #define USES_P053   // PMSx003
+    #define USES_P056   // SDS011-Dust
+    #define USES_P059   // Encoder
 
-  #define USES_P073   // 7DGT
+    #define USES_P073   // 7DGT
 
   // Enable extra climate-related plugins (CO2/Temp/Hum)
   #ifndef USES_P047
@@ -2267,7 +2274,7 @@ To create/register a plugin, you have to :
 /******************************************************************************\
  * Libraries dependencies *****************************************************
 \******************************************************************************/
-#if defined(USES_P020) || defined(USES_P049) || defined(USES_P052) || defined(USES_P053) || defined(USES_P056)  || defined(USES_P065) || defined(USES_P071) || defined(USES_P075) || defined(USES_P077) || defined(USES_P078) || defined(USES_P082) || defined(USES_P085) || defined(USES_P087) || defined(USES_P093)|| defined(USES_P094) || defined(USES_P102) || defined(USES_P105) || defined(USES_P108) || defined(USES_P144) || defined(USES_C018)
+#if defined(USES_P020) || defined(USES_P049) || defined(USES_P052) || defined(USES_P053) || defined(USES_P056)  || defined(USES_P065) || defined(USES_P071) || defined(USES_P075) || defined(USES_P077) || defined(USES_P078) || defined(USES_P082) || defined(USES_P085) || defined(USES_P087) || defined(USES_P093)|| defined(USES_P094) || defined(USES_P102) || defined(USES_P105) || defined(USES_P108) || defined(USES_P144) || defined(USES_C018) || defined(USES_P155)
   // At least one plugin uses serial.
   #ifndef PLUGIN_USES_SERIAL
     #define PLUGIN_USES_SERIAL
