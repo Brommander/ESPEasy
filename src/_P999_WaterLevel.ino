@@ -197,10 +197,10 @@ boolean Plugin_999(uint8_t function, struct EventStruct *event, String &string)
   {
     if (P999_MyInit)
     {
-      UserVar[event->BaseVarIndex + 0] = P999_ValueStart; //--> Soll nur von den Rules beschrieben werden
-      UserVar[event->BaseVarIndex + 1] = P999_ValueHeight;
-      UserVar[event->BaseVarIndex + 2] = P999_ValueVolume;
-      UserVar[event->BaseVarIndex + 3] = P999_ValueLevel;      
+      UserVar.setFloat(event->BaseVarIndex,0,P999_ValueStart); //--> Soll nur von den Rules beschrieben werden
+      UserVar.setFloat(event->BaseVarIndex,1,P999_ValueHeight);
+      UserVar.setFloat(event->BaseVarIndex,2,P999_ValueVolume);
+      UserVar.setFloat(event->BaseVarIndex,3,P999_ValueLevel);
       success = true;
       break;
     }
@@ -380,9 +380,9 @@ void P999_step(struct EventStruct *event) {
 }
 void P999_deleteValues(struct EventStruct *event)
 {
-  UserVar[event->BaseVarIndex + 0] = -1;
-  UserVar[event->BaseVarIndex + 1] = -1;
-  UserVar[event->BaseVarIndex + 2] = -1;
-  UserVar[event->BaseVarIndex + 3] = -1;
+  UserVar.setFloat(event->BaseVarIndex,0,-1); /
+  UserVar.setFloat(event->BaseVarIndex,1,-1);
+  UserVar.setFloat(event->BaseVarIndex,2,-1);
+  UserVar.setFloat(event->BaseVarIndex,3,-1);
 }
 #endif // USES_P999

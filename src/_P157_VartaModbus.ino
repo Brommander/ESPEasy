@@ -372,10 +372,10 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
     if (p157_MyInit)
     {
       int model = P157_MODEL;
-      UserVar[event->BaseVarIndex + 0] = p157_readVal(P157_QUERY1, model);
-      UserVar[event->BaseVarIndex + 1] = p157_readVal(P157_QUERY2, model);
-      UserVar[event->BaseVarIndex + 2] = p157_readVal(P157_QUERY3, model);
-      UserVar[event->BaseVarIndex + 3] = p157_readVal(P157_QUERY4, model);
+      UserVar.setFloat(event->BaseVarIndex,0,p157_readVal(P157_QUERY1, model));
+      UserVar.setFloat(event->BaseVarIndex,1,p157_readVal(P157_QUERY2, model));
+      UserVar.setFloat(event->BaseVarIndex,2,p157_readVal(P157_QUERY3, model));
+      UserVar.setFloat(event->BaseVarIndex,3,p157_readVal(P157_QUERY4, model));
       success = true;
       break;
     }
