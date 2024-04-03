@@ -413,10 +413,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (p156_MyInit)
     {
       int model = P156_MODEL;
-      UserVar[event->BaseVarIndex + 0] = p156_readVal(P156_QUERY1, model);
-      UserVar[event->BaseVarIndex + 1] = p156_readVal(P156_QUERY2, model);
-      UserVar[event->BaseVarIndex + 2] = p156_readVal(P156_QUERY3, model);
-      UserVar[event->BaseVarIndex + 3] = p156_readVal(P156_QUERY4, model);
+      UserVar.setFloat(event->BaseVarIndex,0,p156_readVal(P156_QUERY1, model));
+      UserVar.setFloat(event->BaseVarIndex,1,p156_readVal(P156_QUERY2, model));
+      UserVar.setFloat(event->BaseVarIndex,2,p156_readVal(P156_QUERY3, model));
+      UserVar.setFloat(event->BaseVarIndex,3,p156_readVal(P156_QUERY4, model));
       success = true;
       break;
     }

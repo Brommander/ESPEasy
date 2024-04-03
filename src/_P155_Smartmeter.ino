@@ -356,10 +356,10 @@ boolean Plugin_155(uint8_t function, struct EventStruct *event, String &string)
     if (p155_MyInit)
     {
       int model = P155_MODEL;
-      UserVar[event->BaseVarIndex] = p155_readVal(P155_QUERY1, model);
-      UserVar[event->BaseVarIndex + 1] = p155_readVal(P155_QUERY2, model);
-      UserVar[event->BaseVarIndex + 2] = p155_readVal(P155_QUERY3, model);
-      UserVar[event->BaseVarIndex + 3] = p155_readVal(P155_QUERY4, model);
+      UserVar.setFloat(event->BaseVarIndex,0,p155_readVal(P155_QUERY1, model));
+      UserVar.setFloat(event->BaseVarIndex,1,p155_readVal(P155_QUERY2, model));
+      UserVar.setFloat(event->BaseVarIndex,2,p155_readVal(P155_QUERY3, model));
+      UserVar.setFloat(event->BaseVarIndex,3,p155_readVal(P155_QUERY4, model));
       success = true;
       break;
     }

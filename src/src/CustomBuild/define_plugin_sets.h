@@ -1406,6 +1406,9 @@ To create/register a plugin, you have to :
 
     #define USES_P063   // TTP229_KeyPad
     #define USES_P073   // 7DGT
+
+    #define USES_P075   // Nextion
+
     #define USES_P079   // Wemos Motoshield
 
     #define USES_P155   // Smartmeter (Stromzaehler auslesen)

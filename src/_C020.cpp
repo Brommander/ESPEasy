@@ -286,7 +286,8 @@ bool CPlugin_020(CPlugin::Function function, struct EventStruct *event, String &
         }
         memcpy(&valuefloat, pBuffer, sizeof(float)); // Kopieren des FLoats in das Array
 
-        UserVar[event->BaseVarIndex + x] = valuefloat;
+        UserVar.setFloat(event->BaseVarIndex,x,valuefloat);
+
       }
     }
     addLogMove(LOG_LEVEL_DEBUG, logSEND);
