@@ -66,7 +66,7 @@ void p157_deleteValues(unsigned int model);
 struct p157_dataStructELM
 {
   int lenValue;
-  int datatyp; // 0 = float; 1 = int16
+  int datatyp; // 0 = float; 1 = int16; 2= Uint32
   float factor;
   byte dataRequest[12];
   float value;
@@ -96,7 +96,7 @@ p157_dataStructELM p157_myData[P157_NR_OUTPUT_OPTIONS_MODEL0] =
         p157_dataStructELM(2, 1, 1.0, p157_state, 0),
         p157_dataStructELM(2, 1, 1.0, p157_chargePower, 0),
         p157_dataStructELM(2, 1, 1.0, p157_chargeLevel, 0),
-        p157_dataStructELM(4, 1, 1.0, p157_chargeEnergy, 0),
+        p157_dataStructELM(4, 2, 1.0, p157_chargeEnergy, 0),
         p157_dataStructELM(2, 1, -1.0, p157_powerGrid, 0)};
 
 /*
@@ -372,10 +372,10 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
     if (p157_MyInit)
     {
       int model = P157_MODEL;
-      UserVar.setFloat(event->BaseVarIndex,0,p157_readVal(P157_QUERY1, model));
-      UserVar.setFloat(event->BaseVarIndex,1,p157_readVal(P157_QUERY2, model));
-      UserVar.setFloat(event->BaseVarIndex,2,p157_readVal(P157_QUERY3, model));
-      UserVar.setFloat(event->BaseVarIndex,3,p157_readVal(P157_QUERY4, model));
+      UserVar.setFloat(event->TaskIndex,0,p157_readVal(P157_QUERY1, model));
+      UserVar.setFloat(event->TaskIndex,1,p157_readVal(P157_QUERY2, model));
+      UserVar.setFloat(event->TaskIndex,2,p157_readVal(P157_QUERY3, model));
+      UserVar.setFloat(event->TaskIndex,3,p157_readVal(P157_QUERY4, model));
       success = true;
       break;
     }
@@ -704,10 +704,16 @@ unsigned int p157_parseValues(uint8_t query)
 
   float lValue = 0.0;
   int16_t lValueInt = 0;
+  uint32_t lValueUInt = 0;
   if (p157_myData[query].datatyp == 1)
   {
     lValueInt = ((high1 << 8) + (low1 << 0));
     lValue = lValueInt;
+  }
+  else if (p157_myData[query].datatyp == 2)
+  {
+    lValueUInt = ((high2 << 24) + (low2 << 16) + (high1 << 8) + (low1 << 0));
+    lValue = lValueUInt;
   }
   else
   {
@@ -721,7 +727,10 @@ unsigned int p157_parseValues(uint8_t query)
 
   p157_myData[query].value = lValue * p157_myData[query].factor;
 
-  log += ';';
+  p157_myData[query].value = lValue;
+  log += '[';
+  log += lValue;
+  log += ']';
   log += high1;
   log += '|';
   log += low1;

@@ -256,7 +256,7 @@ bool CPlugin_020(CPlugin::Function function, struct EventStruct *event, String &
       }
       else
       {
-        valuefloat = UserVar[event->BaseVarIndex + x]; // value = formatUserVarNoCheck(event, x);-->String
+        valuefloat = UserVar[event->TaskIndex + x]; // value = formatUserVarNoCheck(event, x);-->String
       }
 
       logSEND += valuefloat;
@@ -286,7 +286,7 @@ bool CPlugin_020(CPlugin::Function function, struct EventStruct *event, String &
         }
         memcpy(&valuefloat, pBuffer, sizeof(float)); // Kopieren des FLoats in das Array
 
-        UserVar.setFloat(event->BaseVarIndex,x,valuefloat);
+        UserVar.setFloat(event->TaskIndex,x,valuefloat);
 
       }
     }
