@@ -193,19 +193,19 @@ boolean Plugin_158(uint8_t function, struct EventStruct *event, String &string)
         {
         case 0:
           P158_ValueCh0 = value;
-          UserVar.setFloat(event->BaseVarIndex,0,P158_ValueCh0);
+          UserVar.setFloat(event->TaskIndex,0,P158_ValueCh0);
           break;
         case 1:
           P158_ValueCh0 = value;
-          UserVar.setFloat(event->BaseVarIndex,1,P158_ValueCh1);
+          UserVar.setFloat(event->TaskIndex,1,P158_ValueCh1);
           break;
         case 2:
           P158_ValueCh0 = value;
-          UserVar.setFloat(event->BaseVarIndex,2,P158_ValueCh2);
+          UserVar.setFloat(event->TaskIndex,2,P158_ValueCh2);
           break;
         case 3:
           P158_ValueCh0 = value;
-          UserVar.setFloat(event->BaseVarIndex,3,P158_ValueCh3);
+          UserVar.setFloat(event->TaskIndex,3,P158_ValueCh3);
           break;
         }
       }
@@ -279,10 +279,10 @@ boolean P158_SetValue(uint8_t address, uint8_t channel, uint16_t value)
 }
 void P158_deleteValues(struct EventStruct *event)
 {
-  UserVar.setFloat(event->BaseVarIndex,0,-1);
-  UserVar.setFloat(event->BaseVarIndex,1,-1);
-  UserVar.setFloat(event->BaseVarIndex,2,-1);
-  UserVar.setFloat(event->BaseVarIndex,3,-1);
+  UserVar.setFloat(event->TaskIndex,0,-1);
+  UserVar.setFloat(event->TaskIndex,1,-1);
+  UserVar.setFloat(event->TaskIndex,2,-1);
+  UserVar.setFloat(event->TaskIndex,3,-1);
 
   for (size_t i = 0; i < P158_NR_OUTPUT_VALUES; i++)
   {

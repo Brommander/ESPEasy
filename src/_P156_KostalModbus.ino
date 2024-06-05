@@ -121,24 +121,24 @@ byte p156_reqMonthlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x46,
 p156_dataStructKPL p156_myData[P156_NR_OUTPUT_OPTIONS_MODEL0] =
     {
         p156_dataStructKPL(1, 0, p156_reqfree, 0),
-        p156_dataStructKPL(2, 1, p156_reqInverterState, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalDCpower, 0),
-        p156_dataStructKPL(2, 0, p156_reqHomeConsumptionBattery, 0),
-        p156_dataStructKPL(2, 0, p156_reqHomeConsumptionGrid, 0),
-        p156_dataStructKPL(2, 0, p156_reqHomeConsumptionPV, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalHomeConsumptionBattery, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalHomeConsumptionGrid, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalHomeConsumptionPV, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalHomeConsumption, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalACpower, 0),
-        p156_dataStructKPL(2, 0, p156_reqBatteryChargeCurrent, 0),
-        p156_dataStructKPL(2, 0, p156_reqBatteryStateOfCharge, 0),
-        p156_dataStructKPL(2, 0, p156_reqBatteryTemperature, 0),
-        p156_dataStructKPL(2, 0, p156_reqBatteryVoltage, 0),
-        p156_dataStructKPL(2, 0, p156_reqTotalYield, 0),
-        p156_dataStructKPL(2, 0, p156_reqDailyYield, 0),
-        p156_dataStructKPL(2, 0, p156_reqYearlyYield, 0),
-        p156_dataStructKPL(2, 0, p156_reqMonthlyYield, 0)};
+        p156_dataStructKPL(4, 1, p156_reqInverterState, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalDCpower, 0),
+        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionBattery, 0),
+        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionGrid, 0),
+        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionPV, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionBattery, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionGrid, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionPV, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumption, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalACpower, 0),
+        p156_dataStructKPL(4, 0, p156_reqBatteryChargeCurrent, 0),
+        p156_dataStructKPL(4, 0, p156_reqBatteryStateOfCharge, 0),
+        p156_dataStructKPL(4, 0, p156_reqBatteryTemperature, 0),
+        p156_dataStructKPL(4, 0, p156_reqBatteryVoltage, 0),
+        p156_dataStructKPL(4, 0, p156_reqTotalYield, 0),
+        p156_dataStructKPL(4, 0, p156_reqDailyYield, 0),
+        p156_dataStructKPL(4, 0, p156_reqYearlyYield, 0),
+        p156_dataStructKPL(4, 0, p156_reqMonthlyYield, 0)};
 
 /*
   get Kostal STPx000TL Modbus ("sunspec") datasheet here: https://www.photovoltaikforum.com/core/attachment/81082-ba-kostal-interface-modbus-tcp-sunspec-pdf/
@@ -413,10 +413,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (p156_MyInit)
     {
       int model = P156_MODEL;
-      UserVar.setFloat(event->BaseVarIndex,0,p156_readVal(P156_QUERY1, model));
-      UserVar.setFloat(event->BaseVarIndex,1,p156_readVal(P156_QUERY2, model));
-      UserVar.setFloat(event->BaseVarIndex,2,p156_readVal(P156_QUERY3, model));
-      UserVar.setFloat(event->BaseVarIndex,3,p156_readVal(P156_QUERY4, model));
+      UserVar.setFloat(event->TaskIndex,0,p156_readVal(P156_QUERY1, model));
+      UserVar.setFloat(event->TaskIndex,1,p156_readVal(P156_QUERY2, model));
+      UserVar.setFloat(event->TaskIndex,2,p156_readVal(P156_QUERY3, model));
+      UserVar.setFloat(event->TaskIndex,3,p156_readVal(P156_QUERY4, model));
       success = true;
       break;
     }
@@ -758,14 +758,14 @@ unsigned int p156_parseValues(uint8_t query)
 
   uint8_t llen = p156_myData[query].lenValue;
   byte b = 0;
-  for (int a = 0; a < bytesToReceive - llen * 2; a++)
+  for (int a = 0; a < bytesToReceive - llen ; a++) //llen -> Anzahl Bytes
   {
     b = p156_client.read();
-    if (a== bytesToReceive - llen * 2 - 9)
+    if (a== bytesToReceive - llen - 9)
     {
       high1 = b;
     }
-    if (a== bytesToReceive - llen * 2 - 8)
+    if (a== bytesToReceive - llen - 8)
     {
       low1 = b;
     }
@@ -819,8 +819,9 @@ unsigned int p156_parseValues(uint8_t query)
   }
 
   p156_myData[query].value = lValue;
-
-  log += '|';
+  log += '[';
+  log += lValue;
+  log += ']';
   log += high1;
   log += '|';
   log += low1;
