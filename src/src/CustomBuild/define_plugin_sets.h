@@ -1424,7 +1424,16 @@ To create/register a plugin, you have to :
 
     #define USES_P063   // TTP229_KeyPad
     #define USES_P073   // 7DGT
+	
+    #define USES_P075   // Nextion
+
     #define USES_P079   // Wemos Motoshield
+
+    #define USES_P155   // Smartmeter (Stromzaehler auslesen)
+    #define USES_P156   // Kostal (Wechselrichter ueber Modbus auslesen)
+    #define USES_P157   // Varta (Speicher ueber Modbus auslesen)
+    #define USES_P158   // I²C Analog Out
+    //#define USES_P999   // WaterLevel
 
     #if !defined(USES_P152) && (defined(ESP32_CLASSIC) || defined(ESP32S2)) // Only supported on ESP32 and ESP32-S2
       #define USES_P152 // ESP32 DAC
@@ -1448,6 +1457,7 @@ To create/register a plugin, you have to :
     #define USES_C009   // FHEM HTTP
     #define USES_C010   // Generic UDP
     #define USES_C013   // ESPEasy P2P network
+	  #define USES_C020   // S7 Kommunikation							   
 #endif
 
 
@@ -2416,7 +2426,7 @@ To create/register a plugin, you have to :
 #if defined(USES_P044) && !defined(USES_P020) // P020 is used to replace/emulate P044
   #define USES_P020
 #endif
-#if defined(USES_P020) || defined(USES_P049) || defined(USES_P052) || defined(USES_P053) || defined(USES_P056)  || defined(USES_P065) || defined(USES_P071) || defined(USES_P075) || defined(USES_P077) || defined(USES_P078) || defined(USES_P082) || defined(USES_P085) || defined(USES_P087) || defined(USES_P093)|| defined(USES_P094) || defined(USES_P102) || defined(USES_P105) || defined(USES_P108) || defined(USES_P144) || defined(USES_C018)
+#if defined(USES_P020) || defined(USES_P049) || defined(USES_P052) || defined(USES_P053) || defined(USES_P056)  || defined(USES_P065) || defined(USES_P071) || defined(USES_P075) || defined(USES_P077) || defined(USES_P078) || defined(USES_P082) || defined(USES_P085) || defined(USES_P087) || defined(USES_P093)|| defined(USES_P094) || defined(USES_P102) || defined(USES_P105) || defined(USES_P108) || defined(USES_P144) || defined(USES_C018) || defined(USES_P155)
   // At least one plugin uses serial.
   #ifndef PLUGIN_USES_SERIAL
     #define PLUGIN_USES_SERIAL
@@ -3271,8 +3281,8 @@ To create/register a plugin, you have to :
   #if defined(ESP8266) && defined(LIMIT_BUILD_SIZE)
     #define FEATURE_IMPROV 0
   #else
-    #define FEATURE_IMPROV 1
-  #endif
+										      #define FEATURE_IMPROV 1
+		   #endif
 #endif
 
 #ifndef FEATURE_CHART_STORAGE_LAYOUT
