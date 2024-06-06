@@ -1,0 +1,9 @@
+Arbeiten immer im Branch PEStable oder PEMine. zur Zeit basiert PE Stabel auf dem Stand von 04.24.
+Zum synchronisieren mit ESPEasy: 
+	1.´Aktuelles ESPEasy aus der Entwicklung (https://github.com/letscontrolit/ESPEasy) testen
+	2. Wenn die Version funktioniert:
+		2.1. Brommander\mega mit Fork Synchronisieren. Bei Fehlern Discard changes.
+		2.2. Aktuellen Branch PEStable sichern
+		2.3. In TortoiseGit auf Pull->Remote origin->Remote Branch auf mega stellen. -->Damit wird der Branch PEStable um die Neuerungen vom Branch mega aktualisiert
+	3. Wenn die Version nicht funktioniert
+		3.1. In TortoiseGit auf Merge-> From auf Tag und das aktuelle Release auswählen. --> Damit wird der Branch PEStable um die Neuerungen vom Releas XXZ aktualisiert. Dabei wird nur Verglichen ob die Commits vorhanden sind. Es wird nicht auf den Stand zurückgebaut
