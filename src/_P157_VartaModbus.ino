@@ -225,8 +225,13 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
 
     //< Model und verschiedene Optionen der Werte anzeigen
     {
-      const __FlashStringHelper *options_model[1] = {F("ELM")};
-      addFormSelector(F("Model Type"), P157_MODEL_LABEL, 1, options_model, nullptr, P157_MODEL);
+      const __FlashStringHelper *options_model[] = {
+        F("ELM"),
+      };
+      constexpr size_t nrOptions = NR_ELEMENTS(options_model);
+      FormSelectorOptions selector(nrOptions, options_model);
+      selector.reloadonchange = true;
+      selector.addFormSelector(F("Model Type"), P157_MODEL_LABEL, P157_MODEL);
     }
     {
       const uint8_t model = PCONFIG(0);                      // TODO

@@ -237,23 +237,27 @@ boolean Plugin_155(uint8_t function, struct EventStruct *event, String &string)
   case PLUGIN_WEBFORM_LOAD:
   {
     {
-      const __FlashStringHelper *options_model[3] = {F("D0"), F("SML"), F("DTZ541")};
-      addFormSelector(F("Model Type"), P155_MODEL_LABEL, 3, options_model, nullptr, P155_MODEL);
+      const __FlashStringHelper *options_model[] = {
+        F("D0"), 
+        F("SML"), 
+        F("DTZ541")
+      };
+      constexpr size_t nrOptions = NR_ELEMENTS(options_model);
+      FormSelectorOptions selector(nrOptions, options_model);
+      selector.reloadonchange = true;
+      selector.addFormSelector(F("Model Type"), P155_MODEL_LABEL, P155_MODEL);
     }
     {
-      const uint8_t model = PCONFIG(0);                      // TODO
-      uint8_t outputOptions = P155_NR_OUTPUT_OPTIONS_MODEL0; // Default immer Model0
+      const uint8_t model = PCONFIG(0);
+      uint8_t outputOptions = P155_NR_OUTPUT_OPTIONS_MODEL0;
       if (model == 1)
         outputOptions = P155_NR_OUTPUT_OPTIONS_MODEL1;
       else if (model == 2)
         outputOptions = P155_NR_OUTPUT_OPTIONS_MODEL2;
-      // In a separate scope to free memory of String array as soon as possible
-      //sensorTypeHelper_webformLoad_simple();//sensorTypeHelper_webformLoad_header();
-      const __FlashStringHelper *options[outputOptions];
 
+      const __FlashStringHelper *options[outputOptions];
       for (int i = 0; i < outputOptions; ++i)
       {
-        const uint8_t model = PCONFIG(0); // TODO
         options[i] = p155_getQueryString(i, model);
       }
       for (uint8_t i = 0; i < P155_NR_OUTPUT_VALUES; ++i)

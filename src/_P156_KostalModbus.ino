@@ -37,7 +37,8 @@
 #define IP_STR_DEF_P156 "255.255.255.255"
 
 #define P156_NR_OUTPUT_VALUES 4
-#define P156_NR_OUTPUT_OPTIONS_MODEL0 19
+#define P156_NR_OUTPUT_OPTIONS_MODEL0 19 // Kostal
+#define P156_NR_OUTPUT_OPTIONS_MODEL1 19 // Sungrow
 #define P156_QUERY1_CONFIG_POS 1
 
 // IDs fuer die Zuordnung der Werte in verschiedenen Querys
@@ -65,7 +66,7 @@ WiFiClient p156_client;
 
 // Funktionen
 // Forward declaration helper functions
-const __FlashStringHelper *p156_getQueryString(uint8_t query);
+const __FlashStringHelper *p156_getQueryString(uint8_t query, uint8_t model);
 const __FlashStringHelper *p156_getQueryValueString(uint8_t query);
 unsigned int p156_getRegister(uint8_t query, uint8_t model);
 float p156_readVal(uint8_t query, unsigned int model);
@@ -235,27 +236,21 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     //< IP anzeigen
     char ipString[IP_BUFF_SIZE_P156] = "";
     String msgStr;
-
     addFormSubHeader(""); // Blank line, vertical space.
     addFormHeader(F("Default Settings"));
-
     String strings[1];
     LoadCustomTaskSettings(event->TaskIndex, strings, 1, CUSTOMTASK_STR_SIZE_P156);
-
     safe_strncpy(ipString, strings[0], IP_BUFF_SIZE_P156);
-
     // LOG
     String log1 = F("Kostal: WebLoad=");
     log1 += event->TaskIndex;
     log1 += F(" IPAdresse=");
     log1 += strings[0];
     addLogMove(LOG_LEVEL_INFO, log1);
-
     addFormTextBox(F("IPv4 Address"), getPluginCustomArgName(0), ipString, IP_ADDR_SIZE_P156);
     msgStr = F("Typical Installations use IP Address ");
     msgStr += F(IP_STR_DEF_P156);
     addFormNote(msgStr);
-
     // LOG
     String log2 = F("Kostal: ipString=");
     log2 += event->TaskIndex;
@@ -266,20 +261,25 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
     //< Model und verschiedene Optionen der Werte anzeigen
     {
-      const __FlashStringHelper *options_model[1] = {F("KPL")};
-      addFormSelector(F("Model Type"), P156_MODEL_LABEL, 1, options_model, nullptr, P156_MODEL);
+      const __FlashStringHelper *options_model[] = {
+        F("KPL"),
+        F("SunGrow"),
+      };
+      constexpr size_t nrOptions = NR_ELEMENTS(options_model);
+      FormSelectorOptions selector(nrOptions, options_model);
+      selector.reloadonchange = true;
+      selector.addFormSelector(F("Model Type"), P156_MODEL_LABEL, P156_MODEL);
     }
     {
-      const uint8_t model = PCONFIG(0);                      // TODO
-      uint8_t outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL0; // Default immer Model0
+      const uint8_t model = PCONFIG(0);
+      uint8_t outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL0; // Default Model0
       if (model == 1)
-        outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL0;
-      // In a separate scope to free memory of String array as soon as possible
-      //sensorTypeHelper_webformLoad_simple();//sensorTypeHelper_webformLoad_header();
+        outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL1;
+
       const __FlashStringHelper *options[outputOptions];
-      for (int i = 0; i < outputOptions; ++i) // Test int i = 0; ; i < P156_NR_OUTPUT_OPTIONS
+      for (int i = 0; i < outputOptions; ++i)
       {
-        options[i] = p156_getQueryString(i);
+        options[i] = p156_getQueryString(i, model); // model mitgeben für typ-spezifische Strings
       }
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       {
@@ -288,7 +288,6 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       }
     }
     //> Model und verschiedene Optionen der Werte anzeigen
-
     success = true;
     break;
   }
@@ -568,7 +567,7 @@ unsigned int p156_getRegister(uint8_t query, uint8_t model)
   return 0;
 }
 
-const __FlashStringHelper *p156_getQueryString(uint8_t query)
+const __FlashStringHelper *p156_getQueryString(uint8_t query, uint8_t model)
 {
   switch (query)
   {
