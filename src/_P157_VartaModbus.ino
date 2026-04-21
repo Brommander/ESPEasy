@@ -3,9 +3,9 @@
 
 #ifdef USES_P157
 
-//#######################################################################################################
-//######################## Plugin 157: Varta Storage ########################
-//#######################################################################################################
+// #######################################################################################################
+// ######################## Plugin 157: Varta Storage ########################
+// #######################################################################################################
 
 #define PLUGIN_157
 #define PLUGIN_ID_157 157
@@ -22,9 +22,9 @@
 #define P157_QUERY3 PCONFIG(3)
 #define P157_QUERY4 PCONFIG(4)
 
-#define P157_MODEL_DFLT 0   // Element
+#define P157_MODEL_DFLT 0  // Element
 #define P157_QUERY1_DFLT 1 //
-#define P157_QUERY2_DFLT 2  //
+#define P157_QUERY2_DFLT 2 //
 #define P157_QUERY3_DFLT 4 //
 #define P157_QUERY4_DFLT 5 //
 
@@ -42,12 +42,11 @@
 
 // IDs fuer die Zuordnung der Werte in verschiedenen Querys
 
-#define ELM_STATE 1;//1065
-#define ELM_CHARGE_POWER 2;//1066
-#define ELM_TOTAL_CHARGE_LEVEL 3;//1068
-#define ELM_TOTAL_CHARGE_ENERGY 4;//1069-1070
-#define ELM_TOTAL_POWER_GRID 5;//1078
-
+#define ELM_STATE 1;               // 1065
+#define ELM_CHARGE_POWER 2;        // 1066
+#define ELM_TOTAL_CHARGE_LEVEL 3;  // 1068
+#define ELM_TOTAL_CHARGE_ENERGY 4; // 1069-1070
+#define ELM_TOTAL_POWER_GRID 5;    // 1078
 
 WiFiClient p157_client;
 
@@ -82,13 +81,13 @@ struct p157_dataStructELM
     value = xValue;
   }
 };
-byte p157_reqfree[12] =     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-byte p157_state[12] =       {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x29, 0, 0x01}; // 1065
+byte p157_reqfree[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+byte p157_state[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x29, 0, 0x01};       // 1065
 byte p157_chargePower[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x2A, 0, 0x01}; // 1066
-byte p157_chargeLevel[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x2C, 0, 0x01};  // 1068
+byte p157_chargeLevel[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x2C, 0, 0x01}; // 1068
 
 byte p157_chargeEnergy[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x2D, 0, 0x02}; // 1069-1070
-byte p157_powerGrid[12] =    {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x36, 0, 0x01};    // 1078
+byte p157_powerGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0xFF, 0x03, 0x04, 0x36, 0, 0x01};    // 1078
 
 p157_dataStructELM p157_myData[P157_NR_OUTPUT_OPTIONS_MODEL0] =
     {
@@ -226,7 +225,7 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
     //< Model und verschiedene Optionen der Werte anzeigen
     {
       const __FlashStringHelper *options_model[] = {
-        F("ELM"),
+          F("ELM"),
       };
       constexpr size_t nrOptions = NR_ELEMENTS(options_model);
       FormSelectorOptions selector(nrOptions, options_model);
@@ -239,7 +238,7 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
       if (model == 1)
         outputOptions = P157_NR_OUTPUT_OPTIONS_MODEL0;
       // In a separate scope to free memory of String array as soon as possible
-      //sensorTypeHelper_webformLoad_simple();//sensorTypeHelper_webformLoad_header();
+      // sensorTypeHelper_webformLoad_simple();//sensorTypeHelper_webformLoad_header();
       const __FlashStringHelper *options[outputOptions];
       for (int i = 0; i < outputOptions; ++i) // Test int i = 0; ; i < P157_NR_OUTPUT_OPTIONS
       {
@@ -367,7 +366,7 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
   case PLUGIN_EXIT:
   {
     p157_MyInit = false;
-    p157_client.stop();    
+    p157_client.stop();
     p157_deleteValues(P157_MODEL);
     break;
   }
@@ -377,10 +376,10 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
     if (p157_MyInit)
     {
       int model = P157_MODEL;
-      UserVar.setFloat(event->TaskIndex,0,p157_readVal(P157_QUERY1, model));
-      UserVar.setFloat(event->TaskIndex,1,p157_readVal(P157_QUERY2, model));
-      UserVar.setFloat(event->TaskIndex,2,p157_readVal(P157_QUERY3, model));
-      UserVar.setFloat(event->TaskIndex,3,p157_readVal(P157_QUERY4, model));
+      UserVar.setFloat(event->TaskIndex, 0, p157_readVal(P157_QUERY1, model));
+      UserVar.setFloat(event->TaskIndex, 1, p157_readVal(P157_QUERY2, model));
+      UserVar.setFloat(event->TaskIndex, 2, p157_readVal(P157_QUERY3, model));
+      UserVar.setFloat(event->TaskIndex, 3, p157_readVal(P157_QUERY4, model));
       success = true;
       break;
     }
@@ -449,7 +448,7 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
       break;
     }
     if (lquery != 0)
-    {       
+    {
       boolean error = p157_sendRequest(lquery);
       if (error)
       {
@@ -457,24 +456,24 @@ boolean Plugin_157(uint8_t function, struct EventStruct *event, String &string)
       }
       if (!error)
       {
-        p157_send_errorcount ++;        
+        p157_send_errorcount++;
         if (p157_send_errorcount > 10)
         {
           p157_send_errorcount = 0;
-          p157_client.flush();
-          p157_client.stop(); 
+          p157_client.clear();
+          p157_client.stop();
           p157_deleteValues(P157_MODEL);
-          p157_reconnectcount ++;
+          p157_reconnectcount++;
         }
-      }      
+      }
     }
-    String logSend =  F("Varta : ");
+    String logSend = F("Varta : ");
     if (loglevelActiveFor(LOG_LEVEL_DEBUG))
     {
-      logSend +=  F("SendError : ");
+      logSend += F("SendError : ");
       logSend += (String)p157_send_errorcount;
     }
-    logSend +=  F("ReConnect : ");
+    logSend += F("ReConnect : ");
     logSend += (String)p157_reconnectcount;
     if (loglevelActiveFor(LOG_LEVEL_DEBUG) || p157_step == 10)
     {
@@ -516,7 +515,7 @@ unsigned int p157_getRegister(uint8_t query, uint8_t model)
     case 4:
       return ELM_TOTAL_CHARGE_ENERGY;
     case 5:
-      return ELM_TOTAL_POWER_GRID;    
+      return ELM_TOTAL_POWER_GRID;
     default:
       return query;
     }
@@ -537,7 +536,7 @@ const __FlashStringHelper *p157_getQueryString(uint8_t query)
   case 4:
     return F("CHARGE_ENERGY");
   case 5:
-    return F("POWER_GRID");  
+    return F("POWER_GRID");
   }
   return F("");
 }
@@ -601,19 +600,19 @@ bool p157_sendRequest(uint8_t query)
   if (lLen > 0)
   {
     addLog(LOG_LEVEL_DEBUG, F("Varta   : SendRequest; Sending"));
-    if (p157_send_count <= 0 || p157_send_count > 65535) //Min Max Anzahl erreicht
+    if (p157_send_count <= 0 || p157_send_count > 65535) // Min Max Anzahl erreicht
     {
       p157_send_count = 1;
     }
     else
     {
-      p157_send_count += 1; //Request hochzaehlen
+      p157_send_count += 1; // Request hochzaehlen
     }
     log += '(';
     log += p157_send_count;
     log += ')';
-    uint8_t HBy =  (uint8_t) (p157_send_count >> 8);
-    uint8_t LBy = (uint8_t) (p157_send_count);
+    uint8_t HBy = (uint8_t)(p157_send_count >> 8);
+    uint8_t LBy = (uint8_t)(p157_send_count);
     p157_myData[query].dataRequest[0] = HBy;
     p157_myData[query].dataRequest[1] = LBy;
 
@@ -649,12 +648,12 @@ unsigned int p157_parseValues(uint8_t query)
     delay(1); // important to service the tcp stack
     if (millis() - timeout > 2000)
     {
-      p157_client.flush();//Wenn ich zulange brauche besser Puffer loeschen und neu versuchen
+      p157_client.clear(); // Wenn ich zulange brauche besser Puffer loeschen und neu versuchen
       return 0;
     }
   }
   int bytesToReceive = p157_client.available();
-  log += '(';  
+  log += '(';
   log += query;
   log += ',';
   log += bytesToReceive;
@@ -662,30 +661,30 @@ unsigned int p157_parseValues(uint8_t query)
 
   uint8_t llen = p157_myData[query].lenValue;
   byte b = 0;
-  for (int a = 0; a < bytesToReceive - llen ; a++) //llen -> Anzahl Bytes
-  { 
+  for (int a = 0; a < bytesToReceive - llen; a++) // llen -> Anzahl Bytes
+  {
     b = p157_client.read();
     if (a == bytesToReceive - llen - 9)
     {
       high1 = b;
     }
-    if (a== bytesToReceive - llen - 8)
+    if (a == bytesToReceive - llen - 8)
     {
       low1 = b;
     }
     log += '|';
-    log += b;   
+    log += b;
   }
-  uint16_t lreceivedId = ((high1 << 8) + (low1 << 0));  
+  uint16_t lreceivedId = ((high1 << 8) + (low1 << 0));
 
   log += '(';
-  log += p157_send_count;  
+  log += p157_send_count;
   log += '=';
-  log += lreceivedId;  
+  log += lreceivedId;
   log += ')';
   if (p157_send_count != lreceivedId)
-  { 
-    p157_client.flush();//Wenn ich alte Daten bekomme oder Puffer alte Daten hat Puffer loeschen und neu versuchen
+  {
+    p157_client.clear(); // Wenn ich alte Daten bekomme oder Puffer alte Daten hat Puffer loeschen und neu versuchen
     addLogMove(LOG_LEVEL_INFO, log);
     return 0;
   }

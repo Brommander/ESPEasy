@@ -1,174 +1,243 @@
-
 #include "_Plugin_Helper.h"
 
 #ifdef USES_P156
 
-//#######################################################################################################
-//######################## Plugin 156: Kostal Inverter ########################
-//#######################################################################################################
+// #######################################################################################################
+// ######################## Plugin 156: Inverter Modbus ########################
+// #######################################################################################################
+//  Kostal KPL  : Modbus TCP, Port 1502, Unit-ID 0x47, Func 0x03, IEEE754 floats
+//  Sungrow SH  : Modbus TCP, Port 502,  Unit-ID 0x01, Func 0x04, U16/S16/U32/S32
+//                Comm. address = Protocol address - 1
+//                U32/S32: little-endian word order, big-endian byte order within word
+//                Skalierungsfaktoren (z.B. /10 fuer 0.1-Schritte) per ESPEasy-Formel einstellen
+// #######################################################################################################
 
 #define PLUGIN_156
 #define PLUGIN_ID_156 156
-#define PLUGIN_NAME_156 "Kostal - Inverter Modbus [Testing]"
+#define PLUGIN_NAME_156 "Inverter Modbus [Testing]"
 
 #define CUSTOMTASK_STR_SIZE_P156 20
 #define P156_MODEL PCONFIG(0)
 #define P156_MODEL_LABEL PCONFIG_LABEL(0)
-
-// IP-Adresse in Variable
 
 #define P156_QUERY1 PCONFIG(1)
 #define P156_QUERY2 PCONFIG(2)
 #define P156_QUERY3 PCONFIG(3)
 #define P156_QUERY4 PCONFIG(4)
 
-#define P156_MODEL_DFLT 0   // plenticore
-#define P156_QUERY1_DFLT 10 //
-#define P156_QUERY2_DFLT 1  //
-#define P156_QUERY3_DFLT 15 //
-#define P156_QUERY4_DFLT 18 //
+#define P156_MODEL_DFLT 0
+#define P156_QUERY1_DFLT 10
+#define P156_QUERY2_DFLT 1
+#define P156_QUERY3_DFLT 15
+#define P156_QUERY4_DFLT 18
 
-// IP Defines.
-#define IP_ADDR_SIZE_P156 15 // IPv4 Addr String size (max length). e.g. 192.168.001.255
-#define IP_BUFF_SIZE_P156 16 // IPv4 Addr Buffer size, including NULL terminator.
-#define IP_MIN_SIZE_P156 7   // IPv4 Addr Minimum size, allows IP strings as short as 0.0.0.0
-#define IP_SEP_CHAR_P156 '.' // IPv4 Addr segments are separated by a dot.
-#define IP_SEP_CNT_P156 3    // IPv4 Addr dot separator count for valid address.
+// IP Defines
+#define IP_ADDR_SIZE_P156 15
+#define IP_BUFF_SIZE_P156 16
+#define IP_MIN_SIZE_P156 7
+#define IP_SEP_CHAR_P156 '.'
+#define IP_SEP_CNT_P156 3
 #define IP_STR_DEF_P156 "255.255.255.255"
 
 #define P156_NR_OUTPUT_VALUES 4
-#define P156_NR_OUTPUT_OPTIONS_MODEL0 19 // Kostal
-#define P156_NR_OUTPUT_OPTIONS_MODEL1 19 // Sungrow
+#define P156_NR_OUTPUT_OPTIONS_MODEL0 19 // Kostal KPL
+#define P156_NR_OUTPUT_OPTIONS_MODEL1 19 // Sungrow SH
 #define P156_QUERY1_CONFIG_POS 1
 
-// IDs fuer die Zuordnung der Werte in verschiedenen Querys
-
-#define KPL_INVERTERSTATE 1;
-#define KPL_TOTAL_DC_POWER 2;
-#define KPL_HOME_CONS_BATT 3;
-#define KPL_HOME_CONS_GRID 4;
-#define KPL_HOME_CONS_PV 5;
-#define KPL_TOTAL_HOME_CONS_BATT 6;
-#define KPL_TOTAL_HOME_CONS_GRID 7;
-#define KPL_TOTAL_HOME_CONS_PV 8;
-#define KPL_TOTAL_HOME_CONSUMPTION 9;
-#define KPL_TOTAL_AC_POWER 10;
-#define KPL_BATT_CHARGE_CURRENT 11;
-#define KPL_BATT_STATE_CHARGE 12;
-#define KPL_BATT_TEMPERATUR 13;
-#define KPL_BATT_VOLTAGE 14;
-#define KPL_TOTAL_YIELD 15;
-#define KPL_DAILY_YIELD 16;
-#define KPL_YEARLY_YIELD 17;
-#define KPL_MONTHLY_YIELD 18;
+#define KPL_INVERTERSTATE 1
+#define KPL_TOTAL_DC_POWER 2
+#define KPL_HOME_CONS_BATT 3
+#define KPL_HOME_CONS_GRID 4
+#define KPL_HOME_CONS_PV 5
+#define KPL_TOTAL_HOME_CONS_BATT 6
+#define KPL_TOTAL_HOME_CONS_GRID 7
+#define KPL_TOTAL_HOME_CONS_PV 8
+#define KPL_TOTAL_HOME_CONSUMPTION 9
+#define KPL_TOTAL_AC_POWER 10
+#define KPL_BATT_CHARGE_CURRENT 11
+#define KPL_BATT_STATE_CHARGE 12
+#define KPL_BATT_TEMPERATUR 13
+#define KPL_BATT_VOLTAGE 14
+#define KPL_TOTAL_YIELD 15
+#define KPL_DAILY_YIELD 16
+#define KPL_YEARLY_YIELD 17
+#define KPL_MONTHLY_YIELD 18
 
 WiFiClient p156_client;
 
-// Funktionen
-// Forward declaration helper functions
+// Forward declarations
 const __FlashStringHelper *p156_getQueryString(uint8_t query, uint8_t model);
-const __FlashStringHelper *p156_getQueryValueString(uint8_t query);
+const __FlashStringHelper *p156_getQueryValueString(uint8_t query, uint8_t model);
 unsigned int p156_getRegister(uint8_t query, uint8_t model);
 float p156_readVal(uint8_t query, unsigned int model);
 bool p156_validateIp(const String &ipStr);
 bool p156_sendRequest(uint8_t query);
 unsigned int p156_parseValues(uint8_t query);
 void p156_deleteValues(unsigned int model);
-// Const Variables
 
+// ============================================================
+// Datenstuktur
+// datatyp: 0 = float IEEE754 (Kostal memcpy)
+//          1 = U32 / U16  unsigned int
+//          2 = S32        signed 32-bit
+//          3 = S16        signed 16-bit  (z.B. Temperatur)
+// lenValue: Anzahl Datenbytes in der Antwort (2 = 1 Register, 4 = 2 Register)
+// ============================================================
 struct p156_dataStructKPL
 {
   int lenValue;
-  int datatyp; // 0 = float; 1 = int16
+  int datatyp;
   byte dataRequest[12];
   float value;
+
   p156_dataStructKPL(int xLenValue, int xDatatyp, byte xDataRequest[12], float xValue)
   {
     lenValue = xLenValue;
     datatyp = xDatatyp;
     for (int i = 0; i < 12; i++)
-    {
       dataRequest[i] = xDataRequest[i];
-    }
     value = xValue;
   }
 };
-byte p156_reqfree[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};                            // 0x38 - 56
-byte p156_reqInverterState[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x38, 0, 0x02}; // 0x38 - 56
-byte p156_reqTotalDCpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x64, 0, 0x02};  // DC Power{0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x63, 0, 0x01};  // 0x64 - 100
 
-byte p156_reqHomeConsumptionBattery[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x6A, 0, 0x02}; // 0x6A - 106 [Watt]
-byte p156_reqHomeConsumptionGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x6C, 0, 0x02};    // 0x6E - 108 [Watt]
-byte p156_reqHomeConsumptionPV[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x74, 0, 0x02};      // 0x74 - 116 [Watt]
+// ============================================================
+// KOSTAL KPL  – Modbus TCP, Port 1502, Unit 0x47, Func 0x03
+// ============================================================
+byte p156_reqfree[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x00, 0, 0};
+byte p156_reqInverterState[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x38, 0, 0x02};               // 0x38=56
+byte p156_reqTotalDCpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x64, 0, 0x02};                // 0x64=100
+byte p156_reqHomeConsumptionBattery[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x6A, 0, 0x02};      // 106
+byte p156_reqHomeConsumptionGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x6C, 0, 0x02};         // 108
+byte p156_reqHomeConsumptionPV[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x74, 0, 0x02};           // 116
+byte p156_reqTotalHomeConsumptionBattery[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x6E, 0, 0x02}; // 110
+byte p156_reqTotalHomeConsumptionGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x70, 0, 0x02};    // 112
+byte p156_reqTotalHomeConsumptionPV[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x72, 0, 0x02};      // 114
+byte p156_reqTotalHomeConsumption[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x76, 0, 0x02};        // 118
+byte p156_reqTotalACpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0xAC, 0, 0x02};                // 172
+byte p156_reqBatteryChargeCurrent[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0xBE, 0, 0x02};        // 190
+byte p156_reqBatteryStateOfCharge[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0xD2, 0, 0x02};        // 210
+byte p156_reqBatteryTemperature[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0xD6, 0, 0x02};          // 214
+byte p156_reqBatteryVoltage[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0xD8, 0, 0x02};              // 216
+byte p156_reqTotalYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x40, 0, 0x02};                  // 320
+byte p156_reqDailyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x42, 0, 0x02};                  // 322
+byte p156_reqYearlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x44, 0, 0x02};                 // 324
+byte p156_reqMonthlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x46, 0, 0x02};                // 326
 
-byte p156_reqTotalHomeConsumptionBattery[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x6E, 0, 0x02}; // 0x6E - 110 [WattStunden]
-byte p156_reqTotalHomeConsumptionGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x70, 0, 0x02};    // 0x70 - 112 [WattStunden]
-byte p156_reqTotalHomeConsumptionPV[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x72, 0, 0x02};      // 0x72 - 114 [WattStunden]
+p156_dataStructKPL p156_myData[P156_NR_OUTPUT_OPTIONS_MODEL0] = {
+    // idx  lenValue  datatyp  request-array                      initVal
+    /* 0  */ p156_dataStructKPL(1, 0, p156_reqfree, 0),
+    /* 1  */ p156_dataStructKPL(4, 1, p156_reqInverterState, 0),
+    /* 2  */ p156_dataStructKPL(4, 0, p156_reqTotalDCpower, 0),
+    /* 3  */ p156_dataStructKPL(4, 0, p156_reqHomeConsumptionBattery, 0),
+    /* 4  */ p156_dataStructKPL(4, 0, p156_reqHomeConsumptionGrid, 0),
+    /* 5  */ p156_dataStructKPL(4, 0, p156_reqHomeConsumptionPV, 0),
+    /* 6  */ p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionBattery, 0),
+    /* 7  */ p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionGrid, 0),
+    /* 8  */ p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionPV, 0),
+    /* 9  */ p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumption, 0),
+    /* 10 */ p156_dataStructKPL(4, 0, p156_reqTotalACpower, 0),
+    /* 11 */ p156_dataStructKPL(4, 0, p156_reqBatteryChargeCurrent, 0),
+    /* 12 */ p156_dataStructKPL(4, 0, p156_reqBatteryStateOfCharge, 0),
+    /* 13 */ p156_dataStructKPL(4, 0, p156_reqBatteryTemperature, 0),
+    /* 14 */ p156_dataStructKPL(4, 0, p156_reqBatteryVoltage, 0),
+    /* 15 */ p156_dataStructKPL(4, 0, p156_reqTotalYield, 0),
+    /* 16 */ p156_dataStructKPL(4, 0, p156_reqDailyYield, 0),
+    /* 17 */ p156_dataStructKPL(4, 0, p156_reqYearlyYield, 0),
+    /* 18 */ p156_dataStructKPL(4, 0, p156_reqMonthlyYield, 0),
+};
 
-byte p156_reqTotalHomeConsumption[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0x76, 0, 0x02}; // 0x76 - 118
+// ============================================================
+// SUNGROW SH  – Modbus TCP, Port 502, Unit 0x01, Func 0x04
+// Comm. address = Protokoll-Adresse - 1
+//
+// Wert-Mapping (analog Kostal):
+//  1  Running state          13000   ≙ INVERTERSTATE
+//  2  Total DC power         5017    ≙ TOTAL_DC_POWER    (W)
+//  3  Battery power          13022   ≙ HOME_CONS_BATT    (W, kein echter Heimverbrauch)
+//  4  Load power             13008   ≙ TOTAL_HOME_CONSUMPTION (S32 W, Gesamtlast)
+//  5  Export power           13010   ≙ HOME_CONS_GRID    (S32 W, neg=Import)
+//  6  Daily PV generation    13002   ≙ HOME_CONS_PV      (0.1 kWh)
+//  7  Total PV generation    13003   ≙ TOTAL_HOME_CONS_PV (0.1 kWh)
+//  8  Daily import energy    13036   ≙ TOTAL_HOME_CONS_GRID (0.1 kWh)
+//  9  Total import energy    13037   ≙ TOTAL_HOME_CONS_BATT (0.1 kWh)
+// 10  Total active power     13034   ≙ TOTAL_AC_POWER    (S32 W)
+// 11  Battery current        13021   ≙ BATT_CHARGE_CURRENT (0.1 A)
+// 12  Battery SOC            13023   ≙ BATT_STATE_CHARGE (0.1 %)
+// 13  Battery temperature    13025   ≙ BATT_TEMPERATUR   (S16, 0.1 °C)
+// 14  Battery voltage        13020   ≙ BATT_VOLTAGE      (0.1 V)
+// 15  Total output energy    5004    ≙ TOTAL_YIELD       (0.1 kWh)
+// 16  Daily output energy    5003    ≙ DAILY_YIELD       (0.1 kWh)
+// 17  Daily batt. discharge  13026   ≙ YEARLY_YIELD Slot (0.1 kWh)
+// 18  Total batt. discharge  13027   ≙ MONTHLY_YIELD Slot (0.1 kWh)
+// ============================================================
+//                                                               TxID    Proto  Len   Unit  Func   AddrH  AddrL  CntH CntL
+byte p156_sg_reqfree[12] = {0, 0, 0, 0, 0, 0, 0x01, 0x04, 0x00, 0x00, 0, 0};
+byte p156_sg_reqRunningState[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xC7, 0, 1};       // 13000 U16
+byte p156_sg_reqTotalDCPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x98, 0, 2};       // 5017-5018 U32 W
+byte p156_sg_reqBattPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDD, 0, 1};          // 13022 U16 W
+byte p156_sg_reqLoadPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xCF, 0, 2};          // 13008-13009 S32 Wpython --version
+byte p156_sg_reqExportPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xD1, 0, 2};        // 13010-13011 S32 W (neg=Import)
+byte p156_sg_reqDailyPVGen[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xC9, 0, 1};         // 13002 U16 0.1kWh
+byte p156_sg_reqTotalPVGen[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xCA, 0, 2};         // 13003-13004 U32 0.1kWh
+byte p156_sg_reqDailyImport[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xEB, 0, 1};        // 13036 U16 0.1kWh
+byte p156_sg_reqTotalImport[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xEC, 0, 2};        // 13037-13038 U32 0.1kWh
+byte p156_sg_reqTotalACPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE9, 0, 2};       // 13034-13035 S32 W
+byte p156_sg_reqBattCurrent[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDC, 0, 1};        // 13021 U16 0.1A
+byte p156_sg_reqBattSOC[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDE, 0, 1};            // 13023 U16 0.1%
+byte p156_sg_reqBattTemp[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE0, 0, 1};           // 13025 S16 0.1°C
+byte p156_sg_reqBattVoltage[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDB, 0, 1};        // 13020 U16 0.1V
+byte p156_sg_reqTotalOutput[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x8B, 0, 2};        // 5004-5005 U32 0.1kWh
+byte p156_sg_reqDailyOutput[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x8A, 0, 1};        // 5003 U16 0.1kWh
+byte p156_sg_reqDailyBattDischarge[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE1, 0, 1}; // 13026 U16 0.1kWh
+byte p156_sg_reqTotalBattDischarge[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE2, 0, 2}; // 13027-13028 U32 0.1kWh
 
-byte p156_reqTotalACpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0xAC, 0, 0x02}; // 0xAC - 172
+p156_dataStructKPL p156_myDataSG[P156_NR_OUTPUT_OPTIONS_MODEL1] = {
+    // idx  lenVal  datatyp  request-array                       initVal
+    /* 0  */ p156_dataStructKPL(0, 0, p156_sg_reqfree, 0),               // unused
+    /* 1  */ p156_dataStructKPL(2, 1, p156_sg_reqRunningState, 0),       // U16
+    /* 2  */ p156_dataStructKPL(4, 1, p156_sg_reqTotalDCPower, 0),       // U32 W
+    /* 3  */ p156_dataStructKPL(2, 1, p156_sg_reqBattPower, 0),          // U16 W
+    /* 4  */ p156_dataStructKPL(4, 2, p156_sg_reqLoadPower, 0),          // S32 W
+    /* 5  */ p156_dataStructKPL(4, 2, p156_sg_reqExportPower, 0),        // S32 W
+    /* 6  */ p156_dataStructKPL(2, 1, p156_sg_reqDailyPVGen, 0),         // U16 0.1kWh
+    /* 7  */ p156_dataStructKPL(4, 1, p156_sg_reqTotalPVGen, 0),         // U32 0.1kWh
+    /* 8  */ p156_dataStructKPL(2, 1, p156_sg_reqDailyImport, 0),        // U16 0.1kWh
+    /* 9  */ p156_dataStructKPL(4, 1, p156_sg_reqTotalImport, 0),        // U32 0.1kWh
+    /* 10 */ p156_dataStructKPL(4, 2, p156_sg_reqTotalACPower, 0),       // S32 W
+    /* 11 */ p156_dataStructKPL(2, 1, p156_sg_reqBattCurrent, 0),        // U16 0.1A
+    /* 12 */ p156_dataStructKPL(2, 1, p156_sg_reqBattSOC, 0),            // U16 0.1%
+    /* 13 */ p156_dataStructKPL(2, 3, p156_sg_reqBattTemp, 0),           // S16 0.1°C
+    /* 14 */ p156_dataStructKPL(2, 1, p156_sg_reqBattVoltage, 0),        // U16 0.1V
+    /* 15 */ p156_dataStructKPL(4, 1, p156_sg_reqTotalOutput, 0),        // U32 0.1kWh
+    /* 16 */ p156_dataStructKPL(2, 1, p156_sg_reqDailyOutput, 0),        // U16 0.1kWh
+    /* 17 */ p156_dataStructKPL(2, 1, p156_sg_reqDailyBattDischarge, 0), // U16 0.1kWh
+    /* 18 */ p156_dataStructKPL(4, 1, p156_sg_reqTotalBattDischarge, 0), // U32 0.1kWh
+};
 
-byte p156_reqBatteryChargeCurrent[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0xBE, 0, 0x02}; // 0xBE - 190
-byte p156_reqBatteryStateOfCharge[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0xD2, 0, 0x02}; // 0xD2 - 210 %
-byte p156_reqBatteryTemperature[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0xD6, 0, 0x02};   // 0xD6 - 214 °C
-byte p156_reqBatteryVoltage[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0, 0xD8, 0, 0x02};       // 0xD8 - 216 V
+// ============================================================
+// Aktiv-Zeiger – werden in PLUGIN_INIT gesetzt
+// ============================================================
+p156_dataStructKPL *p156_activeData = p156_myData;
+int p156_activePort = 1502;
 
-byte p156_reqTotalYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x40, 0, 0x02};   // 0x140 - 320 Wh
-byte p156_reqDailyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x42, 0, 0x02};   // 0x142 - 322 Wh
-byte p156_reqYearlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x44, 0, 0x02};  // 0x144 - 324 Wh
-byte p156_reqMonthlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x46, 0, 0x02}; // 0x146 - 326 Wh
-
-p156_dataStructKPL p156_myData[P156_NR_OUTPUT_OPTIONS_MODEL0] =
-    {
-        p156_dataStructKPL(1, 0, p156_reqfree, 0),
-        p156_dataStructKPL(4, 1, p156_reqInverterState, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalDCpower, 0),
-        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionBattery, 0),
-        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionGrid, 0),
-        p156_dataStructKPL(4, 0, p156_reqHomeConsumptionPV, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionBattery, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionGrid, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumptionPV, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalHomeConsumption, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalACpower, 0),
-        p156_dataStructKPL(4, 0, p156_reqBatteryChargeCurrent, 0),
-        p156_dataStructKPL(4, 0, p156_reqBatteryStateOfCharge, 0),
-        p156_dataStructKPL(4, 0, p156_reqBatteryTemperature, 0),
-        p156_dataStructKPL(4, 0, p156_reqBatteryVoltage, 0),
-        p156_dataStructKPL(4, 0, p156_reqTotalYield, 0),
-        p156_dataStructKPL(4, 0, p156_reqDailyYield, 0),
-        p156_dataStructKPL(4, 0, p156_reqYearlyYield, 0),
-        p156_dataStructKPL(4, 0, p156_reqMonthlyYield, 0)};
-
-/*
-  get Kostal STPx000TL Modbus ("sunspec") datasheet here: https://www.photovoltaikforum.com/core/attachment/81082-ba-kostal-interface-modbus-tcp-sunspec-pdf/
-  Request 12 bytes:
-  00 01 (Transaction id)
-  00 00 (Protocol ID)
-  00 06 (bytes following / length: 6)
-  47 (unit ID 71 / is always 126 no matter what you configured)
-  03 (Function code: read register)
-  00 63 (register 99 (Total DC power)) note: according to datasheet: use register number-1 (100-1)
-  00 01  (words to read: 0001)
-*/
-// Variables
+// Zustandsvariablen
 boolean p156_MyInit = false;
 uint8_t p156_step = 0;
 uint16_t p156_send_count = 0;
 uint16_t p156_send_errorcount = 0;
 uint16_t p156_reconnectcount = 0;
 String p156_IP = "";
-
 int p156_outputOptionsAct;
 
+// ============================================================
+// Plugin-Hauptfunktion
+// ============================================================
 boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 {
   boolean success = false;
 
   switch (function)
   {
-
   case PLUGIN_DEVICE_ADD:
   {
     Device[++deviceCount].Number = PLUGIN_ID_156;
@@ -193,6 +262,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
   case PLUGIN_GET_DEVICEVALUENAMES:
   {
+    const uint8_t model = P156_MODEL;
     for (uint8_t i = 0; i < VARS_PER_TASK; ++i)
     {
       if (i < P156_NR_OUTPUT_VALUES)
@@ -200,7 +270,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         uint8_t choice = PCONFIG(i + P156_QUERY1_CONFIG_POS);
         safe_strncpy(
             ExtraTaskSettings.TaskDeviceValueNames[i],
-            p156_getQueryValueString(choice),
+            p156_getQueryValueString(choice, model),
             sizeof(ExtraTaskSettings.TaskDeviceValueNames[i]));
       }
       else
@@ -221,85 +291,74 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   case PLUGIN_SET_DEFAULTS:
   {
     P156_MODEL = P156_MODEL_DFLT;
-    // TODO IP
     P156_QUERY1 = P156_QUERY1_DFLT;
     P156_QUERY2 = P156_QUERY2_DFLT;
     P156_QUERY3 = P156_QUERY3_DFLT;
     P156_QUERY4 = P156_QUERY4_DFLT;
-
     success = true;
     break;
   }
 
   case PLUGIN_WEBFORM_LOAD:
   {
-    //< IP anzeigen
+    // IP-Adresse anzeigen
     char ipString[IP_BUFF_SIZE_P156] = "";
     String msgStr;
-    addFormSubHeader(""); // Blank line, vertical space.
+    addFormSubHeader("");
     addFormHeader(F("Default Settings"));
     String strings[1];
     LoadCustomTaskSettings(event->TaskIndex, strings, 1, CUSTOMTASK_STR_SIZE_P156);
     safe_strncpy(ipString, strings[0], IP_BUFF_SIZE_P156);
-    // LOG
-    String log1 = F("Kostal: WebLoad=");
+
+    String log1 = F("Inverter: WebLoad=");
     log1 += event->TaskIndex;
-    log1 += F(" IPAdresse=");
+    log1 += F(" IP=");
     log1 += strings[0];
     addLogMove(LOG_LEVEL_INFO, log1);
+
     addFormTextBox(F("IPv4 Address"), getPluginCustomArgName(0), ipString, IP_ADDR_SIZE_P156);
     msgStr = F("Typical Installations use IP Address ");
     msgStr += F(IP_STR_DEF_P156);
     addFormNote(msgStr);
-    // LOG
-    String log2 = F("Kostal: ipString=");
-    log2 += event->TaskIndex;
-    log2 += F(" IPAdresse=");
-    log2 += ipString;
-    addLogMove(LOG_LEVEL_INFO, log2);
-    //> IP anzeigen
 
-    //< Model und verschiedene Optionen der Werte anzeigen
+    // Modell-Auswahl
     {
       const __FlashStringHelper *options_model[] = {
-        F("KPL"),
-        F("SunGrow"),
+          F("KPL (Kostal Plenticore)"),
+          F("SH (Sungrow Hybrid)"),
       };
       constexpr size_t nrOptions = NR_ELEMENTS(options_model);
       FormSelectorOptions selector(nrOptions, options_model);
       selector.reloadonchange = true;
       selector.addFormSelector(F("Model Type"), P156_MODEL_LABEL, P156_MODEL);
     }
+
+    // Wert-Auswahl je nach Modell
     {
       const uint8_t model = PCONFIG(0);
-      uint8_t outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL0; // Default Model0
-      if (model == 1)
-        outputOptions = P156_NR_OUTPUT_OPTIONS_MODEL1;
+      uint8_t outputOptions = (model == 1)
+                                  ? P156_NR_OUTPUT_OPTIONS_MODEL1
+                                  : P156_NR_OUTPUT_OPTIONS_MODEL0;
 
       const __FlashStringHelper *options[outputOptions];
       for (int i = 0; i < outputOptions; ++i)
-      {
-        options[i] = p156_getQueryString(i, model); // model mitgeben für typ-spezifische Strings
-      }
+        options[i] = p156_getQueryString(i, model);
+
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       {
         const uint8_t pconfigIndex = i + P156_QUERY1_CONFIG_POS;
         sensorTypeHelper_loadOutputSelector(event, pconfigIndex, i, outputOptions, options);
       }
     }
-    //> Model und verschiedene Optionen der Werte anzeigen
     success = true;
     break;
   }
 
   case PLUGIN_WEBFORM_SAVE:
   {
-    //< IP Adresse einlesen
     char ipString[IP_BUFF_SIZE_P156] = {0};
     char deviceTemplate[1][CUSTOMTASK_STR_SIZE_P156];
-    String errorStr;
-    String msgStr;
-
+    String errorStr, msgStr;
     LoadTaskSettings(event->TaskIndex);
 
     // Check IP Address.  Hier wird die IP-Adresse aus dem Eingabefenster ausgelesen und in ipString geschrieben
@@ -321,44 +380,35 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     else if (strlen(ipString) < IP_MIN_SIZE_P156)
     { // IP Address too short, load default value. Warn User.
       strcpy_P(ipString, String(F(IP_STR_DEF_P156)).c_str());
-
       msgStr = F("Provided IP Invalid (Using Default). ");
       errorStr += msgStr;
-      msgStr += F("[");
-      msgStr += F(IP_STR_DEF_P156);
-      msgStr += F("]");
       addLogMove(LOG_LEVEL_INFO, msgStr);
     }
     else if (!p156_validateIp(ipString))
-    { // Unexpected IP Address value. Leave as-is, but Warn User.
+    {
       msgStr = F("WARNING, Please Review IP Address. ");
       errorStr += msgStr;
-      msgStr += F("[");
-      msgStr += ipString;
-      msgStr += F("]");
       addLogMove(LOG_LEVEL_INFO, msgStr);
     }
-    else // Am Ende in meine Variable ueberfuehren
+    else
     {
       p156_IP = ipString;
     }
-    // Save the user's IP Address parameters into Custom Settings.
-    safe_strncpy(deviceTemplate[0], ipString, IP_BUFF_SIZE_P156);
-    // Save IP String parameters.
-    SaveCustomTaskSettings(event->TaskIndex, reinterpret_cast<const uint8_t *>(&deviceTemplate), sizeof(deviceTemplate));
-    //> IP Adresse einlesen
 
-    //< Model und ausgewaehlte Daten einlesen
+    safe_strncpy(deviceTemplate[0], ipString, IP_BUFF_SIZE_P156);
+    SaveCustomTaskSettings(event->TaskIndex,
+                           reinterpret_cast<const uint8_t *>(&deviceTemplate),
+                           sizeof(deviceTemplate));
+
     P156_MODEL = getFormItemInt(P156_MODEL_LABEL);
-    // Save output selector parameters.
+    const uint8_t model = P156_MODEL;
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
       const uint8_t pconfigIndex = i + P156_QUERY1_CONFIG_POS;
       const uint8_t choice = PCONFIG(pconfigIndex);
-      sensorTypeHelper_saveOutputSelector(event, pconfigIndex, i, p156_getQueryValueString(choice));
+      sensorTypeHelper_saveOutputSelector(event, pconfigIndex, i,
+                                          p156_getQueryValueString(choice, model));
     }
-    P156_MODEL = getFormItemInt(P156_MODEL_LABEL);
-    //> Model und ausgewaehlte Daten einlesen
 
     p156_MyInit = false; // Force device setup next time
     success = true;
@@ -369,11 +419,21 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   {
     p156_client.stop();
     p156_deleteValues(P156_MODEL);
+
+    // Aktiv-Zeiger und Port je nach Modell setzen
     if (P156_MODEL == 1)
-      p156_outputOptionsAct = P156_NR_OUTPUT_OPTIONS_MODEL0;
+    {
+      p156_activeData = p156_myDataSG;
+      p156_activePort = 502;
+      p156_outputOptionsAct = P156_NR_OUTPUT_OPTIONS_MODEL1;
+    }
     else
+    {
+      p156_activeData = p156_myData;
+      p156_activePort = 1502;
       p156_outputOptionsAct = P156_NR_OUTPUT_OPTIONS_MODEL0;
-    // IP Adresse auslesen
+    }
+
     char ipString[IP_BUFF_SIZE_P156] = "";
     String strings[1];
     LoadCustomTaskSettings(event->TaskIndex, strings, 1, CUSTOMTASK_STR_SIZE_P156);
@@ -386,23 +446,23 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     p156_reconnectcount = 0;
     p156_MyInit = true;
     success = true;
-    if (p156_MyInit)
-    {
-      String log5 = F("Modbus: Init=");
-      log5 += event->TaskIndex;
-      log5 += F(" Model=");
-      log5 += P156_MODEL;
-      log5 += F(" IP=");
-      log5 += p156_IP;
-      addLogMove(LOG_LEVEL_INFO, log5);
-    }
+
+    String log5 = F("Modbus: Init=");
+    log5 += event->TaskIndex;
+    log5 += F(" Model=");
+    log5 += P156_MODEL;
+    log5 += F(" Port=");
+    log5 += p156_activePort;
+    log5 += F(" IP=");
+    log5 += p156_IP;
+    addLogMove(LOG_LEVEL_INFO, log5);
     break;
   }
 
   case PLUGIN_EXIT:
   {
     p156_MyInit = false;
-    p156_client.stop();    
+    p156_client.stop();
     p156_deleteValues(P156_MODEL);
     break;
   }
@@ -412,26 +472,23 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (p156_MyInit)
     {
       int model = P156_MODEL;
-      UserVar.setFloat(event->TaskIndex,0,p156_readVal(P156_QUERY1, model));
-      UserVar.setFloat(event->TaskIndex,1,p156_readVal(P156_QUERY2, model));
-      UserVar.setFloat(event->TaskIndex,2,p156_readVal(P156_QUERY3, model));
-      UserVar.setFloat(event->TaskIndex,3,p156_readVal(P156_QUERY4, model));
+      UserVar.setFloat(event->TaskIndex, 0, p156_readVal(P156_QUERY1, model));
+      UserVar.setFloat(event->TaskIndex, 1, p156_readVal(P156_QUERY2, model));
+      UserVar.setFloat(event->TaskIndex, 2, p156_readVal(P156_QUERY3, model));
+      UserVar.setFloat(event->TaskIndex, 3, p156_readVal(P156_QUERY4, model));
       success = true;
-      break;
     }
     break;
   }
 
-  case PLUGIN_TEN_PER_SECOND: // PLUGIN_TEN_PER_SECOND:
+  case PLUGIN_TEN_PER_SECOND:
   {
-    int lquery = 0;        
+    int lquery = 0;
     switch (p156_step)
     {
-    case 10: // Daten von Query 1 bei Wechselrichter anfragen      
+    case 10: // Daten von Query 1 bei Wechselrichter anfragen
       if (P156_QUERY1 != 0)
-      {
         lquery = P156_QUERY1;
-      }
       p156_step = 11;
       break;
     case 11: // Nach Query 1 einen Zyklus Pause
@@ -439,9 +496,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       break;
     case 20: // Daten von Query 2 bei Wechselrichter anfragen
       if (P156_QUERY2 != 0)
-      {
         lquery = P156_QUERY2;
-      }
       p156_step = 21;
       break;
     case 21: // Nach Query 2 einen Zyklus Pause
@@ -449,9 +504,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       break;
     case 30: // Daten von Query 3 bei Wechselrichter anfragen
       if (P156_QUERY3 != 0)
-      {
         lquery = P156_QUERY3;
-      }
       p156_step = 31;
       break;
     case 31: // Nach Query 3 einen Zyklus Pause
@@ -459,9 +512,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       break;
     case 40: // Daten von Query 4 bei Wechselrichter anfragen
       if (P156_QUERY4 != 0)
-      {
         lquery = P156_QUERY4;
-      }
       p156_step = 41;
       break;
     case 41: // Nach Query 4 einen Zyklus Pause
@@ -471,63 +522,61 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       p156_step = 10;
       break;
     }
+
     if (lquery != 0)
     {
-      boolean error = p156_sendRequest(lquery);
-      if (error)
+      boolean ok = p156_sendRequest(lquery);
+      if (ok)
+        ok = p156_parseValues(lquery);
+      if (!ok)
       {
-        error = p156_parseValues(lquery);
-      }
-      if (!error)
-      {
-        p156_send_errorcount ++;        
+        p156_send_errorcount++;
         if (p156_send_errorcount > 10)
         {
           p156_send_errorcount = 0;
-          p156_client.flush();
-          p156_client.stop(); 
+          p156_client.clear();
+          p156_client.stop();
           p156_deleteValues(P156_MODEL);
-          p156_reconnectcount ++;
+          p156_reconnectcount++;
         }
       }
     }
-    String logSend =  F("Kostal : ");
-    if (loglevelActiveFor(LOG_LEVEL_DEBUG))
-    {
-      logSend +=  F("SendError : ");
-      logSend += (String)p156_send_errorcount;
-    }
-    logSend +=  F("ReConnect : ");
-    logSend += (String)p156_reconnectcount;
+
     if (loglevelActiveFor(LOG_LEVEL_DEBUG) || p156_step == 10)
     {
+      String logSend = F("Inverter: ");
+      if (loglevelActiveFor(LOG_LEVEL_DEBUG))
+      {
+        logSend += F("SendErr=");
+        logSend += (String)p156_send_errorcount;
+        logSend += F(" ");
+      }
+      logSend += F("ReConn=");
+      logSend += (String)p156_reconnectcount;
       addLogMove(LOG_LEVEL_INFO, logSend);
     }
     success = true;
     break;
   }
-  }
+  } // switch(function)
   return success;
 }
 
-// Funktionen
+// ============================================================
+// Hilfsfunktionen
+// ============================================================
+
 float p156_readVal(uint8_t query, unsigned int model)
 {
-  if (model == 0)
-  { // KPL
-    switch (query)
-    {
-    default:
-      return p156_myData[query].value;
-    }
-  }
-  return 0;
+  if (model == 1)
+    return p156_myDataSG[query].value;
+  return p156_myData[query].value; // model == 0
 }
 
 unsigned int p156_getRegister(uint8_t query, uint8_t model)
 {
-  if (model == 0)
-  { // KPL
+  if (model == 0) // KPL
+  {
     switch (query)
     {
     case 1:
@@ -569,6 +618,50 @@ unsigned int p156_getRegister(uint8_t query, uint8_t model)
 
 const __FlashStringHelper *p156_getQueryString(uint8_t query, uint8_t model)
 {
+  if (model == 1) // Sungrow
+  {
+    switch (query)
+    {
+    case 1:
+      return F("SG_RUNNING_STATE");
+    case 2:
+      return F("SG_TOTAL_DC_POWER");
+    case 3:
+      return F("SG_BATTERY_POWER");
+    case 4:
+      return F("SG_LOAD_POWER");
+    case 5:
+      return F("SG_EXPORT_POWER");
+    case 6:
+      return F("SG_DAILY_PV_GEN");
+    case 7:
+      return F("SG_TOTAL_PV_GEN");
+    case 8:
+      return F("SG_DAILY_IMPORT");
+    case 9:
+      return F("SG_TOTAL_IMPORT");
+    case 10:
+      return F("SG_TOTAL_AC_POWER");
+    case 11:
+      return F("SG_BATT_CURRENT");
+    case 12:
+      return F("SG_BATT_SOC");
+    case 13:
+      return F("SG_BATT_TEMP");
+    case 14:
+      return F("SG_BATT_VOLTAGE");
+    case 15:
+      return F("SG_TOTAL_OUTPUT");
+    case 16:
+      return F("SG_DAILY_OUTPUT");
+    case 17:
+      return F("SG_DAILY_BATT_DISCH");
+    case 18:
+      return F("SG_TOTAL_BATT_DISCH");
+    }
+    return F("");
+  }
+  // model == 0: Kostal KPL
   switch (query)
   {
   case 1:
@@ -611,8 +704,52 @@ const __FlashStringHelper *p156_getQueryString(uint8_t query, uint8_t model)
   return F("");
 }
 
-const __FlashStringHelper *p156_getQueryValueString(uint8_t query)
+const __FlashStringHelper *p156_getQueryValueString(uint8_t query, uint8_t model)
 {
+  if (model == 1) // Sungrow
+  {
+    switch (query)
+    {
+    case 1:
+      return F("SG_RunningState");
+    case 2:
+      return F("SG_TotalDCPower");
+    case 3:
+      return F("SG_BattPower");
+    case 4:
+      return F("SG_LoadPower");
+    case 5:
+      return F("SG_ExportPower");
+    case 6:
+      return F("SG_DailyPVGen");
+    case 7:
+      return F("SG_TotalPVGen");
+    case 8:
+      return F("SG_DailyImport");
+    case 9:
+      return F("SG_TotalImport");
+    case 10:
+      return F("SG_TotalACPower");
+    case 11:
+      return F("SG_BattCurrent");
+    case 12:
+      return F("SG_BattSOC");
+    case 13:
+      return F("SG_BattTemp");
+    case 14:
+      return F("SG_BattVoltage");
+    case 15:
+      return F("SG_TotalOutput");
+    case 16:
+      return F("SG_DailyOutput");
+    case 17:
+      return F("SG_DailyBattDisch");
+    case 18:
+      return F("SG_TotalBattDisch");
+    }
+    return F("");
+  }
+  // model == 0: Kostal KPL
   switch (query)
   {
   case 1:
@@ -656,168 +793,153 @@ const __FlashStringHelper *p156_getQueryValueString(uint8_t query)
 }
 
 bool p156_validateIp(const String &ipStr)
-// ************************************************************************************************
-// p156_validateIp(): IPv4 Address validity checker.
-// Arg: IP Address String in dot separated format (192.168.1.255).
-// Return true if IP string appears legit.
 {
   IPAddress ip;
   unsigned int length = ipStr.length();
-
   if ((length < IP_MIN_SIZE_P156) || (length > IP_ADDR_SIZE_P156))
-  {
     return false;
-  }
-  else if (ip.fromString(ipStr) == false)
-  { // ThomasTech's Trick to Check IP for valid formatting.
+  if (ip.fromString(ipStr) == false)
     return false;
-  }
-
   return true;
 }
 
 bool p156_sendRequest(uint8_t query)
 {
-  char *lIP = &p156_IP[0]; // assign the address of 1st character of the string to a pointer to char
-  String log = F("Kostal : Sendrequest ");
+  char *lIP = &p156_IP[0];
+  String log = F("Inverter: Sendrequest ");
   log += p156_IP;
   log += '|';
   log += query;
   addLogMove(LOG_LEVEL_DEBUG, log);
+
   if (!p156_client.connected())
   {
-    if (!p156_client.connect(lIP, 1502, 1000))
-    { // MODBUS port for Kostal is always 1502
-      addLog(LOG_LEVEL_INFO, F("Kostal   : SendRequest; connection failed"));    
+    if (!p156_client.connect(lIP, p156_activePort, 1000)) // Port modellabhängig
+    {
+      addLog(LOG_LEVEL_INFO, F("Inverter: SendRequest; connection failed"));
       return 0;
     }
   }
-  int lLen = sizeof(p156_myData[query].dataRequest);
+
+  int lLen = sizeof(p156_activeData[query].dataRequest);
   if (lLen > 0)
   {
-    addLog(LOG_LEVEL_DEBUG, F("Kostal   : SendRequest; Sending"));
-    if (p156_send_count <= 0 || p156_send_count > 65535) //Min Max Anzahl erreicht
-    {
+    if (p156_send_count <= 0 || p156_send_count > 65535)
       p156_send_count = 1;
-    }
     else
-    {
-      p156_send_count += 1; //Request hochzaehlen
-    }
-    log += '(';
-    log += p156_send_count;
-    log += ')';
-    uint8_t HBy =  (uint8_t) (p156_send_count >> 8);
-    uint8_t LBy = (uint8_t) (p156_send_count);
-    p156_myData[query].dataRequest[0] = HBy;
-    p156_myData[query].dataRequest[1] = LBy;
+      p156_send_count++;
 
-    byte *lPointer = &p156_myData[query].dataRequest[0];
-    p156_client.write(lPointer, lLen); // p156_client.write(&reqTotalDCpower[0], sizeof(reqTotalDCpower)); //-->geht
-    // Log
+    uint8_t HBy = (uint8_t)(p156_send_count >> 8);
+    uint8_t LBy = (uint8_t)(p156_send_count);
+    p156_activeData[query].dataRequest[0] = HBy;
+    p156_activeData[query].dataRequest[1] = LBy;
+
+    byte *lPointer = &p156_activeData[query].dataRequest[0];
+    p156_client.write(lPointer, lLen);
+
     if (loglevelActiveFor(LOG_LEVEL_DEBUG))
     {
+      log += '(';
+      log += p156_send_count;
+      log += ')';
       for (int i = 0; i < lLen; i++)
       {
         log += '|';
-        log += p156_myData[query].dataRequest[i];
+        log += p156_activeData[query].dataRequest[i];
       }
       addLogMove(LOG_LEVEL_DEBUG, log);
     }
     return 1;
   }
-  else
-  {
-    log += F("Daten zu kurz");
-    addLogMove(LOG_LEVEL_INFO, log);
-    return 0;
-  }
+  log += F(" Daten zu kurz");
+  addLogMove(LOG_LEVEL_INFO, log);
+  return 0;
 }
 
 unsigned int p156_parseValues(uint8_t query)
 {
-  String log = F("Kostal : parseValues ");
+  String log = F("Inverter: parseValues ");
   uint8_t high1 = 0, low1 = 0, high2 = 0, low2 = 0;
+
   unsigned long timeout = millis();
   while (p156_client.available() < 11)
   {
-    delay(1); // important to service the tcp stack
+    delay(1);
     if (millis() - timeout > 2000)
     {
-      p156_client.flush();//Wenn ich zulange brauche besser Puffer loeschen und neu versuchen
+      p156_client.clear();
       return 0;
     }
   }
+
   int bytesToReceive = p156_client.available();
-  log += '(';  
+  log += '(';
   log += query;
   log += ',';
   log += bytesToReceive;
   log += ')';
 
-  uint8_t llen = p156_myData[query].lenValue;
+  uint8_t llen = p156_activeData[query].lenValue;
   byte b = 0;
-  for (int a = 0; a < bytesToReceive - llen ; a++) //llen -> Anzahl Bytes
+
+  // Header-Bytes lesen; letzten zwei vor Nutzdaten = Transaction-ID
+  for (int a = 0; a < bytesToReceive - llen; a++)
   {
     b = p156_client.read();
-    if (a== bytesToReceive - llen - 9)
-    {
+    if (a == bytesToReceive - llen - 9)
       high1 = b;
-    }
-    if (a== bytesToReceive - llen - 8)
-    {
+    if (a == bytesToReceive - llen - 8)
       low1 = b;
-    }
     log += '|';
-    log += b;  
+    log += b;
   }
-  uint16_t lreceivedId = ((high1 << 8) + (low1 << 0));  
 
+  uint16_t lreceivedId = ((high1 << 8) + low1);
   log += '(';
-  log += p156_send_count;  
+  log += p156_send_count;
   log += '=';
-  log += lreceivedId;  
+  log += lreceivedId;
   log += ')';
+
   if (p156_send_count != lreceivedId)
-  { 
-    p156_client.flush();//Wenn ich alte Daten bekomme oder Puffer alte Daten hat Puffer loeschen und neu versuchen
+  {
+    p156_client.clear();
     addLogMove(LOG_LEVEL_INFO, log);
     return 0;
   }
-  high1 = 0, low1 = 0, high2 = 0, low2 = 0;
+
+  high1 = 0;
+  low1 = 0;
+  high2 = 0;
+  low2 = 0;
   if (llen > 0)
-  {
     high1 = p156_client.read();
-  }
   if (llen > 1)
-  {
     low1 = p156_client.read();
-  }
   if (llen > 2)
-  {
     high2 = p156_client.read();
-  }
   if (llen > 3)
-  {
     low2 = p156_client.read();
-  }
 
-  float lValue = 0.0;
-  if (p156_myData[query].datatyp == 1)
+  float lValue = 0.0f;
+  switch (p156_activeData[query].datatyp)
   {
-    lValue = ((high2 << 24) + (low2 << 16) + (high1 << 8) + (low1 << 0));
-  }
-  else
-  {
+  case 1: // U32 / U16 unsigned
+    lValue = (float)(uint32_t)((high2 << 24) | (low2 << 16) | (high1 << 8) | low1);
+    break;
+  case 2: // S32 signed (Sungrow Load/Export/AC-Power)
+    lValue = (float)(int32_t)((high2 << 24) | (low2 << 16) | (high1 << 8) | low1);
+    break;
+  case 3: // S16 signed (Sungrow Batterie-Temperatur)
+    lValue = (float)(int16_t)((high1 << 8) | low1);
+    break;
+  default: // 0: IEEE754 float (Kostal)
     unsigned char pBuffer[] = {low2, high2, low1, high1};
-    memcpy(&lValue, pBuffer, sizeof(float)); // Kopieren des Arrays auf eine float-Variable
-    // lValue = ((high2 << 24) + (low2 << 16) + (high1 << 8) + (low1 << 0)); --> geht nicht
-    // lValue = ((high1 << 24) + (low1 << 16) + (high2 << 8) + (low2 << 0)); --> geht nicht
-    // lValue = ((low2 << 24) + (high2 << 16) + (low1 << 8) + (high1 << 0)); --> geht nicht
-    // lValue = ((low1 << 24) + (high1 << 16) + (low2 << 8) + (high2 << 0)); --> geht nicht
+    memcpy(&lValue, pBuffer, sizeof(float));
+    break;
   }
 
-  p156_myData[query].value = lValue;
+  p156_activeData[query].value = lValue;
   log += '[';
   log += lValue;
   log += ']';
@@ -834,12 +956,15 @@ unsigned int p156_parseValues(uint8_t query)
 
 void p156_deleteValues(unsigned int model)
 {
-  if (model == 0)
+  if (model == 1)
+  {
+    for (int i = 0; i < P156_NR_OUTPUT_OPTIONS_MODEL1; i++)
+      p156_myDataSG[i].value = 0;
+  }
+  else
   {
     for (int i = 0; i < P156_NR_OUTPUT_OPTIONS_MODEL0; i++)
-    {
       p156_myData[i].value = 0;
-    }
   }
 }
 
