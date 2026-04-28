@@ -812,6 +812,8 @@ bool p156_validateIp(const String &ipStr)
 
 bool p156_sendRequest(uint8_t query)
 {
+  if (!NetworkConnected(0))
+    return false;
   char *lIP = &p156_IP[0];
   String log = F("Inverter: Sendrequest ");
   log += p156_IP;

@@ -544,6 +544,8 @@ bool p157_validateIp(const String &ipStr)
 
 bool p157_sendRequest(uint8_t query)
 {
+  if (!NetworkConnected(0))
+    return false;
   char *lIP = &p157_IP[0];
   String log = F("Varta: Sendrequest ");
   log += p157_IP;
