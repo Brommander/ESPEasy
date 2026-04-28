@@ -25,6 +25,12 @@
 #define P156_QUERY3 PCONFIG(3)
 #define P156_QUERY4 PCONFIG(4)
 
+#define P156_PAUSE_MS PCONFIG(5)
+#define P156_PAUSE_MS_LABEL PCONFIG_LABEL(5)
+#define P156_PAUSE_MS_DFLT 100
+#define P156_PAUSE_MS_MIN 10
+#define P156_PAUSE_MS_MAX 5000
+
 #define P156_MODEL_DFLT 0
 #define P156_QUERY1_DFLT 10
 #define P156_QUERY2_DFLT 1
@@ -76,12 +82,12 @@ unsigned int p156_parseValues(uint8_t query);
 void p156_deleteValues(unsigned int model);
 
 // ============================================================
-// Datenstuktur
+// Datenstruktur
 // datatyp: 0 = float IEEE754 (Kostal memcpy)
 //          1 = U32 / U16  unsigned int
 //          2 = S32        signed 32-bit
-//          3 = S16        signed 16-bit  (z.B. Temperatur)
-// lenValue: Anzahl Datenbytes in der Antwort (2 = 1 Register, 4 = 2 Register)
+//          3 = S16        signed 16-bit (z.B. Temperatur)
+// lenValue: Anzahl Datenbytes in der Antwort (2=1 Register, 4=2 Register)
 // ============================================================
 struct p156_dataStructKPL
 {
@@ -101,11 +107,11 @@ struct p156_dataStructKPL
 };
 
 // ============================================================
-// KOSTAL KPL  – Modbus TCP, Port 1502, Unit 0x47, Func 0x03
+// KOSTAL KPL – Modbus TCP, Port 1502, Unit 0x47, Func 0x03
 // ============================================================
 byte p156_reqfree[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x00, 0, 0};
-byte p156_reqInverterState[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x38, 0, 0x02};               // 0x38=56
-byte p156_reqTotalDCpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x64, 0, 0x02};                // 0x64=100
+byte p156_reqInverterState[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x38, 0, 0x02};               // 56
+byte p156_reqTotalDCpower[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x64, 0, 0x02};                // 100
 byte p156_reqHomeConsumptionBattery[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x6A, 0, 0x02};      // 106
 byte p156_reqHomeConsumptionGrid[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x6C, 0, 0x02};         // 108
 byte p156_reqHomeConsumptionPV[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x00, 0x74, 0, 0x02};           // 116
@@ -124,7 +130,6 @@ byte p156_reqYearlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x44, 
 byte p156_reqMonthlyYield[12] = {0, 0x01, 0, 0, 0, 0x06, 0x47, 0x03, 0x01, 0x46, 0, 0x02};                // 326
 
 p156_dataStructKPL p156_myData[P156_NR_OUTPUT_OPTIONS_MODEL0] = {
-    // idx  lenValue  datatyp  request-array                      initVal
     /* 0  */ p156_dataStructKPL(1, 0, p156_reqfree, 0),
     /* 1  */ p156_dataStructKPL(4, 1, p156_reqInverterState, 0),
     /* 2  */ p156_dataStructKPL(4, 0, p156_reqTotalDCpower, 0),
@@ -147,35 +152,15 @@ p156_dataStructKPL p156_myData[P156_NR_OUTPUT_OPTIONS_MODEL0] = {
 };
 
 // ============================================================
-// SUNGROW SH  – Modbus TCP, Port 502, Unit 0x01, Func 0x04
+// SUNGROW SH – Modbus TCP, Port 502, Unit 0x01, Func 0x04
 // Comm. address = Protokoll-Adresse - 1
-//
-// Wert-Mapping (analog Kostal):
-//  1  Running state          13000   ≙ INVERTERSTATE
-//  2  Total DC power         5017    ≙ TOTAL_DC_POWER    (W)
-//  3  Battery power          13022   ≙ HOME_CONS_BATT    (W, kein echter Heimverbrauch)
-//  4  Load power             13008   ≙ TOTAL_HOME_CONSUMPTION (S32 W, Gesamtlast)
-//  5  Export power           13010   ≙ HOME_CONS_GRID    (S32 W, neg=Import)
-//  6  Daily PV generation    13002   ≙ HOME_CONS_PV      (0.1 kWh)
-//  7  Total PV generation    13003   ≙ TOTAL_HOME_CONS_PV (0.1 kWh)
-//  8  Daily import energy    13036   ≙ TOTAL_HOME_CONS_GRID (0.1 kWh)
-//  9  Total import energy    13037   ≙ TOTAL_HOME_CONS_BATT (0.1 kWh)
-// 10  Total active power     13034   ≙ TOTAL_AC_POWER    (S32 W)
-// 11  Battery current        13021   ≙ BATT_CHARGE_CURRENT (0.1 A)
-// 12  Battery SOC            13023   ≙ BATT_STATE_CHARGE (0.1 %)
-// 13  Battery temperature    13025   ≙ BATT_TEMPERATUR   (S16, 0.1 °C)
-// 14  Battery voltage        13020   ≙ BATT_VOLTAGE      (0.1 V)
-// 15  Total output energy    5004    ≙ TOTAL_YIELD       (0.1 kWh)
-// 16  Daily output energy    5003    ≙ DAILY_YIELD       (0.1 kWh)
-// 17  Daily batt. discharge  13026   ≙ YEARLY_YIELD Slot (0.1 kWh)
-// 18  Total batt. discharge  13027   ≙ MONTHLY_YIELD Slot (0.1 kWh)
+// U32/S32: little-endian word order, big-endian byte order within word
 // ============================================================
-//                                                               TxID    Proto  Len   Unit  Func   AddrH  AddrL  CntH CntL
 byte p156_sg_reqfree[12] = {0, 0, 0, 0, 0, 0, 0x01, 0x04, 0x00, 0x00, 0, 0};
 byte p156_sg_reqRunningState[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xC7, 0, 1};       // 13000 U16
 byte p156_sg_reqTotalDCPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x98, 0, 2};       // 5017-5018 U32 W
 byte p156_sg_reqBattPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDD, 0, 1};          // 13022 U16 W
-byte p156_sg_reqLoadPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xCF, 0, 2};          // 13008-13009 S32 Wpython --version
+byte p156_sg_reqLoadPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xCF, 0, 2};          // 13008-13009 S32 W
 byte p156_sg_reqExportPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xD1, 0, 2};        // 13010-13011 S32 W (neg=Import)
 byte p156_sg_reqDailyPVGen[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xC9, 0, 1};         // 13002 U16 0.1kWh
 byte p156_sg_reqTotalPVGen[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xCA, 0, 2};         // 13003-13004 U32 0.1kWh
@@ -184,7 +169,7 @@ byte p156_sg_reqTotalImport[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xEC, 
 byte p156_sg_reqTotalACPower[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE9, 0, 2};       // 13034-13035 S32 W
 byte p156_sg_reqBattCurrent[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDC, 0, 1};        // 13021 U16 0.1A
 byte p156_sg_reqBattSOC[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDE, 0, 1};            // 13023 U16 0.1%
-byte p156_sg_reqBattTemp[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE0, 0, 1};           // 13025 S16 0.1°C
+byte p156_sg_reqBattTemp[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE0, 0, 1};           // 13025 S16 0.1degC
 byte p156_sg_reqBattVoltage[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xDB, 0, 1};        // 13020 U16 0.1V
 byte p156_sg_reqTotalOutput[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x8B, 0, 2};        // 5004-5005 U32 0.1kWh
 byte p156_sg_reqDailyOutput[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x13, 0x8A, 0, 1};        // 5003 U16 0.1kWh
@@ -192,7 +177,6 @@ byte p156_sg_reqDailyBattDischarge[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32,
 byte p156_sg_reqTotalBattDischarge[12] = {0, 0x01, 0, 0, 0, 6, 0x01, 0x04, 0x32, 0xE2, 0, 2}; // 13027-13028 U32 0.1kWh
 
 p156_dataStructKPL p156_myDataSG[P156_NR_OUTPUT_OPTIONS_MODEL1] = {
-    // idx  lenVal  datatyp  request-array                       initVal
     /* 0  */ p156_dataStructKPL(0, 0, p156_sg_reqfree, 0),               // unused
     /* 1  */ p156_dataStructKPL(2, 1, p156_sg_reqRunningState, 0),       // U16
     /* 2  */ p156_dataStructKPL(4, 1, p156_sg_reqTotalDCPower, 0),       // U32 W
@@ -206,7 +190,7 @@ p156_dataStructKPL p156_myDataSG[P156_NR_OUTPUT_OPTIONS_MODEL1] = {
     /* 10 */ p156_dataStructKPL(4, 2, p156_sg_reqTotalACPower, 0),       // S32 W
     /* 11 */ p156_dataStructKPL(2, 1, p156_sg_reqBattCurrent, 0),        // U16 0.1A
     /* 12 */ p156_dataStructKPL(2, 1, p156_sg_reqBattSOC, 0),            // U16 0.1%
-    /* 13 */ p156_dataStructKPL(2, 3, p156_sg_reqBattTemp, 0),           // S16 0.1°C
+    /* 13 */ p156_dataStructKPL(2, 3, p156_sg_reqBattTemp, 0),           // S16 0.1degC
     /* 14 */ p156_dataStructKPL(2, 1, p156_sg_reqBattVoltage, 0),        // U16 0.1V
     /* 15 */ p156_dataStructKPL(4, 1, p156_sg_reqTotalOutput, 0),        // U32 0.1kWh
     /* 16 */ p156_dataStructKPL(2, 1, p156_sg_reqDailyOutput, 0),        // U16 0.1kWh
@@ -222,12 +206,13 @@ int p156_activePort = 1502;
 
 // Zustandsvariablen
 boolean p156_MyInit = false;
-uint8_t p156_step = 0;
+uint8_t p156_step = 10; // direkt bei Query 1 starten
 uint16_t p156_send_count = 0;
 uint16_t p156_send_errorcount = 0;
 uint16_t p156_reconnectcount = 0;
 String p156_IP = "";
 int p156_outputOptionsAct;
+uint32_t p156_last_send = 0; // millis()-Startzeitpunkt der letzten Pause
 
 // ============================================================
 // Plugin-Hauptfunktion
@@ -295,6 +280,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     P156_QUERY2 = P156_QUERY2_DFLT;
     P156_QUERY3 = P156_QUERY3_DFLT;
     P156_QUERY4 = P156_QUERY4_DFLT;
+    P156_PAUSE_MS = P156_PAUSE_MS_DFLT;
     success = true;
     break;
   }
@@ -350,6 +336,15 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         sensorTypeHelper_loadOutputSelector(event, pconfigIndex, i, outputOptions, options);
       }
     }
+
+    // Pause-Zeit
+    addFormNumericBox(F("Pause between queries (ms)"),
+                      P156_PAUSE_MS_LABEL,
+                      P156_PAUSE_MS,
+                      P156_PAUSE_MS_MIN,
+                      P156_PAUSE_MS_MAX);
+    addFormNote(F("Wartezeit zwischen zwei Modbus-Anfragen (10 - 5000 ms)"));
+
     success = true;
     break;
   }
@@ -409,6 +404,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       sensorTypeHelper_saveOutputSelector(event, pconfigIndex, i,
                                           p156_getQueryValueString(choice, model));
     }
+    P156_PAUSE_MS = getFormItemInt(P156_PAUSE_MS_LABEL);
 
     p156_MyInit = false; // Force device setup next time
     success = true;
@@ -420,7 +416,6 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     p156_client.stop();
     p156_deleteValues(P156_MODEL);
 
-    // Aktiv-Zeiger und Port je nach Modell setzen
     if (P156_MODEL == 1)
     {
       p156_activeData = p156_myDataSG;
@@ -440,20 +435,23 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     safe_strncpy(ipString, strings[0], IP_BUFF_SIZE_P156);
     p156_IP = ipString;
 
-    p156_step = 0;
+    p156_step = 10; // direkt bei Query 1 starten
     p156_send_count = 0;
     p156_send_errorcount = 0;
     p156_reconnectcount = 0;
+    p156_last_send = millis(); // Startzeitpunkt setzen
     p156_MyInit = true;
     success = true;
 
-    String log5 = F("Modbus: Init=");
+    String log5 = F("Inverter: Init=");
     log5 += event->TaskIndex;
     log5 += F(" Model=");
     log5 += P156_MODEL;
     log5 += F(" Port=");
     log5 += p156_activePort;
-    log5 += F(" IP=");
+    log5 += F(" Pause=");
+    log5 += P156_PAUSE_MS;
+    log5 += F("ms IP=");
     log5 += p156_IP;
     addLogMove(LOG_LEVEL_INFO, log5);
     break;
@@ -483,39 +481,39 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
   case PLUGIN_TEN_PER_SECOND:
   {
+    if (!p156_MyInit)
+    {
+      success = true;
+      break;
+    }
+
+    if ((millis() - p156_last_send) < (uint32_t)P156_PAUSE_MS)
+    {
+      success = true;
+      break;
+    }
+
     int lquery = 0;
     switch (p156_step)
     {
-    case 10: // Daten von Query 1 bei Wechselrichter anfragen
+    case 10:
       if (P156_QUERY1 != 0)
         lquery = P156_QUERY1;
-      p156_step = 11;
-      break;
-    case 11: // Nach Query 1 einen Zyklus Pause
       p156_step = 20;
       break;
-    case 20: // Daten von Query 2 bei Wechselrichter anfragen
+    case 20:
       if (P156_QUERY2 != 0)
         lquery = P156_QUERY2;
-      p156_step = 21;
-      break;
-    case 21: // Nach Query 2 einen Zyklus Pause
       p156_step = 30;
       break;
-    case 30: // Daten von Query 3 bei Wechselrichter anfragen
+    case 30:
       if (P156_QUERY3 != 0)
         lquery = P156_QUERY3;
-      p156_step = 31;
-      break;
-    case 31: // Nach Query 3 einen Zyklus Pause
       p156_step = 40;
       break;
-    case 40: // Daten von Query 4 bei Wechselrichter anfragen
+    case 40:
       if (P156_QUERY4 != 0)
         lquery = P156_QUERY4;
-      p156_step = 41;
-      break;
-    case 41: // Nach Query 4 einen Zyklus Pause
       p156_step = 10;
       break;
     default:
@@ -528,6 +526,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       boolean ok = p156_sendRequest(lquery);
       if (ok)
         ok = p156_parseValues(lquery);
+
       if (!ok)
       {
         p156_send_errorcount++;
@@ -540,6 +539,12 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
           p156_reconnectcount++;
         }
       }
+      else
+      {
+        p156_send_errorcount = 0; // Fehler bei Erfolg zuruecksetzen
+      }
+
+      p156_last_send = millis(); // Pausenstart merken
     }
 
     if (loglevelActiveFor(LOG_LEVEL_DEBUG) || p156_step == 10)
@@ -548,17 +553,19 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       if (loglevelActiveFor(LOG_LEVEL_DEBUG))
       {
         logSend += F("SendErr=");
-        logSend += (String)p156_send_errorcount;
-        logSend += F(" ");
+        logSend += p156_send_errorcount;
+        logSend += F(" Pause=");
+        logSend += P156_PAUSE_MS;
+        logSend += F("ms ");
       }
       logSend += F("ReConn=");
-      logSend += (String)p156_reconnectcount;
+      logSend += p156_reconnectcount;
       addLogMove(LOG_LEVEL_INFO, logSend);
     }
     success = true;
     break;
   }
-  } // switch(function)
+  } // switch
   return success;
 }
 
@@ -575,7 +582,7 @@ float p156_readVal(uint8_t query, unsigned int model)
 
 unsigned int p156_getRegister(uint8_t query, uint8_t model)
 {
-  if (model == 0) // KPL
+  if (model == 0)
   {
     switch (query)
     {
@@ -814,7 +821,7 @@ bool p156_sendRequest(uint8_t query)
 
   if (!p156_client.connected())
   {
-    if (!p156_client.connect(lIP, p156_activePort, 1000)) // Port modellabhängig
+    if (!p156_client.connect(lIP, p156_activePort, 1000))
     {
       addLog(LOG_LEVEL_INFO, F("Inverter: SendRequest; connection failed"));
       return 0;
@@ -927,16 +934,18 @@ unsigned int p156_parseValues(uint8_t query)
   case 1: // U32 / U16 unsigned
     lValue = (float)(uint32_t)((high2 << 24) | (low2 << 16) | (high1 << 8) | low1);
     break;
-  case 2: // S32 signed (Sungrow Load/Export/AC-Power)
+  case 2: // S32 signed
     lValue = (float)(int32_t)((high2 << 24) | (low2 << 16) | (high1 << 8) | low1);
     break;
-  case 3: // S16 signed (Sungrow Batterie-Temperatur)
+  case 3: // S16 signed
     lValue = (float)(int16_t)((high1 << 8) | low1);
     break;
   default: // 0: IEEE754 float (Kostal)
+  {
     unsigned char pBuffer[] = {low2, high2, low1, high1};
     memcpy(&lValue, pBuffer, sizeof(float));
     break;
+  }
   }
 
   p156_activeData[query].value = lValue;
