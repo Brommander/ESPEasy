@@ -16,8 +16,9 @@
 //   Nach der OBIS-Kennung enthält jeder SML-ListEntry folgende Felder,
 //   jeweils eingeleitet durch ein TL-Byte (Type-Length):
 //     Status | Time | Unit | Scaler (int8) | Value
-//   TL-Byte: Bits 7-4 = Typ (5=int, 6=uint, 7=string, 0=optional)
+//   TL-Byte: Bits 7-4 = Typ (5=int, 6=uint, 7=Liste, 0=optional)
 //            Bits 3-0 = Gesamtlänge inkl. TL-Byte (0 = nicht vorhanden)
+//            Für Listen (Typ 7): Bits 3-0 = Anzahl Kindelemente + 1
 //   SML-Auto liest diese Felder dynamisch → funktioniert bei allen
 //   SML-konformen Zählern unabhängig vom Hersteller.
 // #######################################################################################################
@@ -164,8 +165,7 @@ p155_dataStructSML p155_myDataDTZ[P155_NR_OUTPUT_OPTIONS_MODEL2] = {
     p155_dataStructSML(14, 0.0001, p155_rxOrbis6, 0.0),
 };
 
-// Model 3: SML-Auto – posData wird ignoriert, factor bleibt für Fallback
-// Der Scaler aus dem Telegramm wird bevorzugt, factor als Reserve
+// Model 3: SML-Auto – posData wird ignoriert, Scaler kommt aus Telegramm
 p155_dataStructSML p155_myDataAuto[P155_NR_OUTPUT_OPTIONS_MODEL3] = {
     p155_dataStructSML(0, 1.0, p155_rxOrbis0, 0.0),
     p155_dataStructSML(0, 1.0, p155_rxOrbis1, 0.0), // Scaler aus Telegramm
@@ -203,6 +203,7 @@ int8_t p155_scaler = 0;        // Scaler-Byte aus dem SML-Telegramm
 uint8_t p155_autoSubState = 0; // Aktuell zu lesendes Feld (0=Status,1=Time,2=Unit,3=Scaler,4=Value)
 uint8_t p155_skipBytes = 0;    // Noch zu überspringende Bytes
 uint8_t p155_autoDataTyp = 0;  // SML-Datentyp des Value-Feldes (5=int,6=uint)
+uint8_t p155_listElems = 0;    // Verbleibende Kindelemente bei List-Typ (type=7)
 
 // ============================================================
 // Plugin-Hauptfunktion
@@ -365,6 +366,7 @@ boolean Plugin_155(uint8_t function, struct EventStruct *event, String &string)
     p155_autoSubState = 0;
     p155_skipBytes = 0;
     p155_autoDataTyp = 0;
+    p155_listElems = 0;
     p155_MyInit = true;
     success = true;
 
@@ -677,6 +679,7 @@ void p155_handleSerialInSML(unsigned int model)
       p155_scaler = 0;
       p155_autoSubState = 0;
       p155_skipBytes = 0;
+      p155_listElems = 0;
     }
 
     switch (p155_step)
@@ -736,6 +739,7 @@ void p155_handleSerialInSML(unsigned int model)
             p155_scaler = 0;
             p155_autoSubState = 0; // beginnt mit Status-Feld
             p155_skipBytes = 0;
+            p155_listElems = 0;
             p155_step = 30;
           }
           else
@@ -790,13 +794,13 @@ void p155_handleSerialInSML(unsigned int model)
       break;
 
     // -------------------------------------------------------
-    // States 30-34: SML-Auto – dynamisches TL-Parsing
+    // States 30-33: SML-Auto – dynamisches TL-Parsing
     //
     // TL-Byte Format:
-    //   Bits 7-4: Typ (0=optional, 5=int signed, 6=uint, 7=string)
+    //   Bits 7-4: Typ (0=optional, 5=int signed, 6=uint, 7=Liste)
     //   Bits 3-0: Gesamtlänge inkl. TL-Byte
-    //             → Datenbytes = (bits3-0) - 1
-    //             → 0 = Feld nicht vorhanden
+    //     Primitive Typen: Datenbytes = bits3-0 - 1
+    //     Listen (Typ 7): Kindelemente = bits3-0 - 1  (NICHT Byte-Anzahl!)
     //
     // autoSubState: 0=Status, 1=Time, 2=Unit, 3=Scaler, 4=Value
     // -------------------------------------------------------
@@ -804,12 +808,43 @@ void p155_handleSerialInSML(unsigned int model)
     {
       uint8_t tlLen = (b & 0x0F);                        // Gesamtlänge inkl. TL
       uint8_t tlTyp = (b >> 4) & 0x07;                   // Datentyp
-      uint8_t dataBytes = (tlLen > 0) ? (tlLen - 1) : 0; // nur Datenbytes
+      uint8_t dataBytes = (tlLen > 0) ? (tlLen - 1) : 0; // Datenbytes (bei Primitiven)
+
+      // Debug-Log: zeigt jeden TL-Byte (nur bei Log-Level DEBUG aktiv)
+      if (loglevelActiveFor(LOG_LEVEL_DEBUG) && p155_registerAct > 0)
+      {
+        String tl = F("SML-TL: reg=");
+        tl += p155_registerAct;
+        tl += F(" sub=");
+        tl += p155_autoSubState;
+        tl += F(" b=0x");
+        tl += String(b, HEX);
+        tl += F(" typ=");
+        tl += tlTyp;
+        tl += F(" data=");
+        tl += dataBytes;
+        addLogMove(LOG_LEVEL_DEBUG, tl);
+      }
 
       if (p155_autoSubState < 3)
       {
-        // Status (0), Time (1), Unit (2): einfach überspringen
-        if (dataBytes == 0)
+        // Status (0), Time (1), Unit (2)
+        if (tlTyp == 7)
+        {
+          // Listen-Typ: bits3-0 = Anzahl Kindelemente direkt (NICHT Byte-Anzahl!)
+          // Beispiel: 72 = type7, 2 Kinder (62 01 + 65 xx xx xx xx fuer SML_Time)
+          uint8_t numElems = tlLen;
+          if (numElems == 0)
+          {
+            p155_autoSubState++; // leere Liste → weiter
+          }
+          else
+          {
+            p155_listElems = numElems;
+            p155_step = 36;
+          }
+        }
+        else if (dataBytes == 0)
         {
           p155_autoSubState++; // Feld nicht vorhanden → weiter
           // state 30 bleibt, liest nächstes TL
@@ -854,7 +889,7 @@ void p155_handleSerialInSML(unsigned int model)
       break;
     }
 
-    case 31: // Bytes überspringen (Status/Time/Unit)
+    case 31: // Bytes überspringen (Status/Time/Unit, primitive Typen)
       p155_skipBytes--;
       if (p155_skipBytes == 0)
       {
@@ -880,6 +915,63 @@ void p155_handleSerialInSML(unsigned int model)
       }
       break;
 
+    // -------------------------------------------------------
+    // States 36-37: Listen-Typ (type=7) Kindelemente überspringen
+    //
+    // Benötigt für SML_Time mit Zeitstempel, z.B.:
+    //   72 62 01 65 xx xx xx xx  (Liste mit 2 Kindelementen)
+    //   - 72: Liste, 2-1=1 Kind  → falsch! 72 hat 2 Kinder (secType + secValue)
+    //   Korrekte Interpretation: bits3-0 - 1 = Anzahl Kinder
+    //     72 → 2-1=1 Kind? oder 2 Kinder?
+    //   Praxis: State 36 liest TL-Byte jedes Kindes und überspringt seine Daten
+    // -------------------------------------------------------
+    case 36: // TL-Byte eines Listkind-Elements lesen
+    {
+      uint8_t cLen = (b & 0x0F);
+      uint8_t cTyp = (b >> 4) & 0x07;
+      uint8_t cData = (cLen > 0) ? (cLen - 1) : 0;
+
+      if (cTyp == 7)
+      {
+        // Verschachtelte Liste: aktuelles Element durch seine Kinder ersetzen
+        p155_listElems = p155_listElems - 1 + (cLen > 0 ? cLen - 1 : 0);
+      }
+      else
+      {
+        p155_listElems--;
+        if (cData > 0)
+        {
+          p155_skipBytes = cData;
+          p155_step = 37; // Daten überspringen, dann zurück zu 36 oder 30
+          break;
+        }
+      }
+
+      if (p155_listElems == 0)
+      {
+        p155_autoSubState++;
+        p155_step = 30;
+      }
+      // sonst: weiter in State 36 für nächstes Kind
+      break;
+    }
+
+    case 37: // Daten eines Listkind-Elements überspringen
+      p155_skipBytes--;
+      if (p155_skipBytes == 0)
+      {
+        if (p155_listElems == 0)
+        {
+          p155_autoSubState++;
+          p155_step = 30;
+        }
+        else
+        {
+          p155_step = 36; // nächstes Kindelement
+        }
+      }
+      break;
+
     default:
       p155_step = 0;
       p155_charsRead = 0;
@@ -887,6 +979,7 @@ void p155_handleSerialInSML(unsigned int model)
       p155_registerAct = 0;
       p155_posDataAct = 0;
       p155_autoSubState = 0;
+      p155_listElems = 0;
       break;
     }
   } // while serial available
@@ -953,7 +1046,6 @@ void p155_handleSerialInD0()
 
 // ============================================================
 // Werte parsen: hardcodierte SML-Models (1, 2)
-// BUGFIX: model-Parameter hinzugefügt (fehlte in Forward Declaration)
 // ============================================================
 void p155_parseValuesSML(unsigned int model)
 {
@@ -1045,30 +1137,27 @@ void p155_parseValuesSML(unsigned int model)
 
 // ============================================================
 // Werte parsen: SML-Auto (Model 3)
-// Verwendet Scaler aus dem Telegramm, kein hardcodierter factor
 // ============================================================
 void p155_parseValuesSMLAuto()
 {
-  float lvalue = 0.0f;
-
-  // Wenn p155_anzBytes > 4 (z.B. int64): obere Bytes ignorieren, untere 4 nehmen
+  // FIX2: Bei >4 Bytes (z.B. int64) obere Bytes ignorieren, untere 4 nehmen
+  // (wie Model 1 – energy-Werte liegen im unteren 32-bit-Bereich)
   int startByte = (p155_anzBytes > 4) ? (p155_anzBytes - 4) : 0;
   int readBytes = (p155_anzBytes > 4) ? 4 : p155_anzBytes;
 
-  // BUG1 FIX: uint32_t fuer Akkumulation -> kein signed UB
   uint32_t rawU = 0;
   for (int i = 0; i < readBytes; i++)
     rawU = (rawU << 8) | (uint8_t)p155_rxBuffer[startByte + i];
 
+  float lvalue = 0.0f;
   if (p155_autoDataTyp == 5) // signed int
   {
     int32_t raw = (int32_t)rawU;
-    // Vorzeichenerweiterung nur noetig wenn < 4 Bytes gelesen
+    // Vorzeichenerweiterung nur nötig wenn < 4 Bytes gelesen
     if (readBytes == 1 && (rawU & 0x80))
       raw |= (int32_t)0xFFFFFF00;
     else if (readBytes == 2 && (rawU & 0x8000))
       raw |= (int32_t)0xFFFF0000;
-    // Bei 4 Bytes: cast zu int32_t genuegt (korrekte 2er-Komplement-Darstellung)
     lvalue = (float)raw;
   }
   else // unsigned (typ 6) oder unbekannt
@@ -1076,13 +1165,9 @@ void p155_parseValuesSMLAuto()
     lvalue = (float)rawU;
   }
 
-  // Scaler anwenden: Wert * 10^scaler
-  float scaledValue = lvalue;
-  if (p155_scaler != 0)
-  {
-    // powf statt Schleife - praeziser, kein Akkumulationsfehler
-    scaledValue = lvalue * powf(10.0f, (float)p155_scaler);
-  }
+  float scaledValue = (p155_scaler != 0)
+                          ? lvalue * powf(10.0f, (float)p155_scaler)
+                          : lvalue;
 
   p155_myDataAuto[p155_registerAct].value = scaledValue;
 

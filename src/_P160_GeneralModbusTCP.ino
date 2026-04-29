@@ -58,6 +58,8 @@
 #define P160_TYPE_U32 2
 #define P160_TYPE_S32 3
 #define P160_TYPE_FLOAT 4
+#define P160_TYPE_U32WS 5
+#define P160_TYPE_S32WS 6
 
 #define P160_NR_OUTPUT_VALUES 4
 #define P160_NR_PAUSE_GROUPS 4
@@ -276,7 +278,9 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
         F("S16 - signed 16-bit"),
         F("U32 - unsigned 32-bit"),
         F("S32 - signed 32-bit"),
-        F("Float - IEEE754 "),
+        F("Float - IEEE754"),
+        F("U32 WS - unsigned 32-bit word-swapped"),
+        F("S32 WS - signed 32-bit word-swapped"),
     };
     const __FlashStringHelper *grpOpts[] = {
         F("Gruppe 1"),
@@ -292,7 +296,7 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
       char buf[8];
       snprintf(buf, sizeof(buf), "%u", p160_getReg(i, P160_REGS01, P160_REGS23));
       addFormTextBox(F("Registeradresse"), getPluginCustomArgName(P160_ARG_REG0 + i), buf, 6);
-      addFormNote(F("PDU-Adresse 0-65535. 4xxxxx-Notation: minus 400001. Sungrow: minus 1"));
+      addFormNote(F("PDU-Adresse 0-65535. 4xxxxx-Notation: Adresse minus 400001"));
 
       {
         FormSelectorOptions tsel(NR_ELEMENTS(dtOpts), dtOpts);
@@ -648,6 +652,12 @@ bool p160_parseValues(P160_Instance *inst, uint8_t qIdx)
     memcpy(&v, b, sizeof(float));
     break;
   }
+  case P160_TYPE_U32WS: // Word-Swapped: h2/l2=HighWord, h1/l1=LowWord (Varta, Sungrow)
+    v = (float)(uint32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
+    break;
+  case P160_TYPE_S32WS:
+    v = (float)(int32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
+    break;
   }
   inst->values[qIdx] = v;
   return true;
