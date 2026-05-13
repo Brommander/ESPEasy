@@ -65,7 +65,7 @@
 #define P160_NR_PAUSE_GROUPS 4
 
 // ============================================================
-// Hilfsfunktionen
+// Helper functions
 // ============================================================
 static uint8_t p160_getGroup(uint8_t qIdx, int16_t pg)
 {
@@ -142,7 +142,7 @@ static int32_t p160_setPause(int32_t packed, uint8_t group, uint32_t ms)
 }
 
 // ============================================================
-// Instanzdaten
+// Instance data
 // ============================================================
 struct P160_Instance : public PluginTaskData_base
 {
@@ -160,7 +160,9 @@ struct P160_Instance : public PluginTaskData_base
   uint16_t sendCount = 0;
   uint16_t errorCount = 0;
   uint16_t reconnectCount = 0;
-  uint32_t lastSend[P160_NR_OUTPUT_VALUES] = {0, 0, 0, 0}; // pro Query, nicht pro Gruppe
+  uint32_t lastSend[P160_NR_OUTPUT_VALUES] = {0, 0, 0, 0}; // per query, not per group
+  uint32_t requestTime = 0;                                // time when pending request was sent (0 = none)
+  uint8_t pendingQuery = 255;                              // query index of pending request (255 = none)
   float values[P160_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
 };
 
@@ -168,7 +170,7 @@ bool p160_sendRequest(P160_Instance *inst, uint8_t qIdx);
 bool p160_parseValues(P160_Instance *inst, uint8_t qIdx);
 
 // ============================================================
-// Plugin
+// Plugin main function
 // ============================================================
 boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
 {
@@ -178,17 +180,18 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
   {
   case PLUGIN_DEVICE_ADD:
   {
-    Device[++deviceCount].Number = PLUGIN_ID_160;
-    Device[deviceCount].Type = DEVICE_TYPE_DUMMY;
-    Device[deviceCount].VType = Sensor_VType::SENSOR_TYPE_QUAD;
-    Device[deviceCount].Ports = 0;
-    Device[deviceCount].PullUpOption = false;
-    Device[deviceCount].InverseLogicOption = false;
-    Device[deviceCount].FormulaOption = true;
-    Device[deviceCount].ValueCount = P160_NR_OUTPUT_VALUES;
-    Device[deviceCount].SendDataOption = true;
-    Device[deviceCount].TimerOption = true;
-    Device[deviceCount].GlobalSyncOption = true;
+    auto &dev = Device[++deviceCount];
+    dev.Number = PLUGIN_ID_160;
+    dev.Type = DEVICE_TYPE_DUMMY;
+    dev.VType = Sensor_VType::SENSOR_TYPE_QUAD;
+    dev.Ports = 0;
+    dev.PullUpOption = false;
+    dev.InverseLogicOption = false;
+    dev.FormulaOption = true;
+    dev.ValueCount = P160_NR_OUTPUT_VALUES;
+    dev.SendDataOption = true;
+    dev.TimerOption = true;
+    dev.GlobalSyncOption = true;
     break;
   }
 
@@ -331,11 +334,7 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
 
   case PLUGIN_WEBFORM_SAVE:
   {
-    // Wie P156/P157: LoadTaskSettings stellt Task-Namen aus Flash wieder her,
-    // bevor ESPEasy ihn aus dem Formular (ggf. leer) ueberschreibt.
     LoadTaskSettings(event->TaskIndex);
-
-    // IP-Guard: Enable-Toggle sendet kein vollstaendiges Formular
     String ipStr = webArg(getPluginCustomArgName(P160_ARG_IP));
     if (ipStr.length() < 7)
     {
@@ -448,6 +447,8 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
     inst->sendCount = 0;
     inst->errorCount = 0;
     inst->reconnectCount = 0;
+    inst->requestTime = 0;
+    inst->pendingQuery = 255;
     inst->myInit = true;
     success = true;
 
@@ -502,42 +503,78 @@ boolean Plugin_160(uint8_t function, struct EventStruct *event, String &string)
       success = true;
       break;
     }
-    // Round-Robin: lastSend pro Query -> jede Query hat eigenen Timer
-    for (uint8_t attempt = 0; attempt < P160_NR_OUTPUT_VALUES; ++attempt)
+
+    // Two-phase Round-Robin:
+    // Phase 1: if a request is pending, try to parse the response
+    // Phase 2: only send a new request if no response is pending
+    if (inst->pendingQuery < P160_NR_OUTPUT_VALUES)
     {
-      uint8_t qIdx = (inst->queryIndex + attempt) % P160_NR_OUTPUT_VALUES;
-      uint8_t group = inst->pauseGroup[qIdx];
-      if (inst->regAddr[qIdx] == 0)
+      // Phase 1: pending request — try to read response
+      uint8_t qIdx = inst->pendingQuery;
+      bool ok = p160_parseValues(inst, qIdx);
+      if (ok)
       {
-        if (attempt == 0)
-          inst->queryIndex = (qIdx + 1) % P160_NR_OUTPUT_VALUES;
-        continue;
-      }
-      if ((millis() - inst->lastSend[qIdx]) >= inst->pauseMs[group])
-      {
-        boolean ok = p160_sendRequest(inst, qIdx);
-        if (ok)
-          ok = p160_parseValues(inst, qIdx);
-        if (!ok)
-        {
-          inst->errorCount++;
-          if (inst->errorCount > 10)
-          {
-            inst->errorCount = 0;
-            inst->client.clear();
-            inst->client.stop();
-            for (uint8_t i = 0; i < P160_NR_OUTPUT_VALUES; ++i)
-              inst->values[i] = 0.0f;
-            inst->reconnectCount++;
-          }
-        }
-        else
-        {
-          inst->errorCount = 0;
-        }
+        inst->pendingQuery = 255;
+        inst->errorCount = 0;
         inst->lastSend[qIdx] = millis();
         inst->queryIndex = (qIdx + 1) % P160_NR_OUTPUT_VALUES;
-        break;
+      }
+      else if (timePassedSince(inst->requestTime) > 500)
+      {
+        // Response timeout — give up, advance to next query
+        inst->pendingQuery = 255;
+        inst->client.clear();
+        inst->lastSend[qIdx] = millis();
+        inst->queryIndex = (qIdx + 1) % P160_NR_OUTPUT_VALUES;
+        inst->errorCount++;
+        if (inst->errorCount > 10)
+        {
+          inst->errorCount = 0;
+          inst->client.stop();
+          for (uint8_t i = 0; i < P160_NR_OUTPUT_VALUES; ++i)
+            inst->values[i] = 0.0f;
+          inst->reconnectCount++;
+        }
+      }
+      // else: still within timeout window — wait, do nothing this cycle
+    }
+    else
+    {
+      // Phase 2: no pending request — send next request if timer has expired
+      for (uint8_t attempt = 0; attempt < P160_NR_OUTPUT_VALUES; ++attempt)
+      {
+        uint8_t qIdx = (inst->queryIndex + attempt) % P160_NR_OUTPUT_VALUES;
+        uint8_t group = inst->pauseGroup[qIdx];
+        if (inst->regAddr[qIdx] == 0)
+        {
+          if (attempt == 0)
+            inst->queryIndex = (qIdx + 1) % P160_NR_OUTPUT_VALUES;
+          continue;
+        }
+        if (timePassedSince(inst->lastSend[qIdx]) >= inst->pauseMs[group])
+        {
+          bool ok = p160_sendRequest(inst, qIdx);
+          if (ok)
+          {
+            inst->pendingQuery = qIdx; // response will be read in next cycle(s)
+          }
+          else
+          {
+            inst->errorCount++;
+            inst->lastSend[qIdx] = millis();
+            inst->queryIndex = (qIdx + 1) % P160_NR_OUTPUT_VALUES;
+            if (inst->errorCount > 10)
+            {
+              inst->errorCount = 0;
+              inst->client.clear();
+              inst->client.stop();
+              for (uint8_t i = 0; i < P160_NR_OUTPUT_VALUES; ++i)
+                inst->values[i] = 0.0f;
+              inst->reconnectCount++;
+            }
+          }
+          break;
+        }
       }
     }
     success = true;
@@ -551,14 +588,14 @@ bool p160_sendRequest(P160_Instance *inst, uint8_t qIdx)
 {
   if (!inst)
     return false;
-  // Kein Connect-Versuch wenn WiFi noch nicht bereit (verhindert Crash beim Boot)
+  // Skip connect attempt if WiFi not ready yet (prevents crash at boot)
   if (!NetworkConnected(0))
     return false;
   if (!inst->client.connected())
   {
-    if (!inst->client.connect(inst->ip, inst->port))
+    if (!inst->client.connect(inst->ip, inst->port, 500)) // 500ms TCP connect timeout
     {
-      // Nur jeden 10. Fehler loggen (spart RAM/Log-Flood bei Geraet offline)
+      // Log only every 10th error (avoids log flood when device is offline)
       if (loglevelActiveFor(LOG_LEVEL_INFO) && (inst->errorCount % 10 == 0))
       {
         String l = F("P160: connect failed ");
@@ -588,6 +625,7 @@ bool p160_sendRequest(P160_Instance *inst, uint8_t qIdx)
   req[9] = (uint8_t)inst->regAddr[qIdx];
   req[10] = 0;
   req[11] = regCount;
+  inst->requestTime = millis(); // record send time for response timeout
   inst->client.write(req, sizeof(req));
   return true;
 }
@@ -596,19 +634,20 @@ bool p160_parseValues(P160_Instance *inst, uint8_t qIdx)
 {
   if (!inst)
     return false;
-  unsigned long t = millis();
-  while (inst->client.available() < 11)
-  {
-    delay(1);
-    if (millis() - t > 2000)
-    {
-      inst->client.clear();
-      return false;
-    }
-  }
-  int avail = inst->client.available();
+
+  // Non-blocking: return false immediately if response not yet arrived.
+  // Timeout is handled by the caller (TEN_PER_SECOND Phase 1).
+  // minBytes: 9 header bytes + 2 (U16/S16) or 4 (U32+) data bytes
+  size_t available = inst->client.available();
+  const uint8_t minBytes = 9 + ((inst->dataType[qIdx] >= P160_TYPE_U32) ? 4 : 2);
+  if (available < minBytes)
+    return false;
+
+  int avail = available; // use cached value
   uint8_t dB = (inst->dataType[qIdx] >= P160_TYPE_U32) ? 4 : 2;
   uint8_t tH = 0, tL = 0;
+
+  // Read header bytes (avail - dB), capture transaction ID from bytes 0-1
   for (int a = 0; a < avail - dB; a++)
   {
     byte b = inst->client.read();
@@ -635,16 +674,16 @@ bool p160_parseValues(P160_Instance *inst, uint8_t qIdx)
   switch (inst->dataType[qIdx])
   {
   case P160_TYPE_U16:
-    v = (float)(uint16_t)((h1 << 8) | l1);
+    v = (uint16_t)((h1 << 8) | l1);
     break;
   case P160_TYPE_S16:
-    v = (float)(int16_t)((h1 << 8) | l1);
+    v = (int16_t)((h1 << 8) | l1);
     break;
   case P160_TYPE_U32:
-    v = (float)(uint32_t)(((uint32_t)h1 << 24) | ((uint32_t)l1 << 16) | ((uint32_t)h2 << 8) | (uint32_t)l2);
+    v = (uint32_t)(((uint32_t)h1 << 24) | ((uint32_t)l1 << 16) | ((uint32_t)h2 << 8) | (uint32_t)l2);
     break;
   case P160_TYPE_S32:
-    v = (float)(int32_t)(((uint32_t)h1 << 24) | ((uint32_t)l1 << 16) | ((uint32_t)h2 << 8) | (uint32_t)l2);
+    v = (int32_t)(((uint32_t)h1 << 24) | ((uint32_t)l1 << 16) | ((uint32_t)h2 << 8) | (uint32_t)l2);
     break;
   case P160_TYPE_FLOAT:
   {
@@ -653,10 +692,10 @@ bool p160_parseValues(P160_Instance *inst, uint8_t qIdx)
     break;
   }
   case P160_TYPE_U32WS: // Word-Swapped: h2/l2=HighWord, h1/l1=LowWord (Varta, Sungrow)
-    v = (float)(uint32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
+    v = (uint32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
     break;
   case P160_TYPE_S32WS:
-    v = (float)(int32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
+    v = (int32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
     break;
   }
   inst->values[qIdx] = v;
