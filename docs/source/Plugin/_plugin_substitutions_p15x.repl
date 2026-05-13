@@ -11,7 +11,6 @@
 .. |P150_maintainer| replace:: `tonhuisman`
 .. |P150_compileinfo| replace:: `.`
 .. |P150_usedlibraries| replace:: `.`
-
 .. |P151_name| replace:: :cyan:`I2C Honeywell Pressure`
 .. |P151_type| replace:: :cyan:`Environment`
 .. |P151_typename| replace:: :cyan:`Environment - I2C Honeywell Pressure`
@@ -25,7 +24,6 @@
 .. |P151_maintainer| replace:: `TD-er`
 .. |P151_compileinfo| replace:: `.`
 .. |P151_usedlibraries| replace:: `.`
-
 .. |P152_name| replace:: :cyan:`ESP32 DAC`
 .. |P152_type| replace:: :cyan:`Output`
 .. |P152_typename| replace:: :cyan:`Output - ESP32 DAC`
@@ -39,7 +37,6 @@
 .. |P152_maintainer| replace:: `tonhuisman`
 .. |P152_compileinfo| replace:: `.`
 .. |P152_usedlibraries| replace:: `.`
-
 .. |P153_name| replace:: :cyan:`SHT4x`
 .. |P153_type| replace:: :cyan:`Environment`
 .. |P153_typename| replace:: :cyan:`Environment - SHT4x`
@@ -53,7 +50,6 @@
 .. |P153_maintainer| replace:: `tonhuisman`
 .. |P153_compileinfo| replace:: `.`
 .. |P153_usedlibraries| replace:: `.`
-
 .. |P154_name| replace:: :cyan:`BMP3xx (I2C)`
 .. |P154_type| replace:: :cyan:`Environment`
 .. |P154_typename| replace:: :cyan:`Environment - BMP3xx (I2C)`
@@ -67,7 +63,32 @@
 .. |P154_maintainer| replace:: `TD-er`
 .. |P154_compileinfo| replace:: `.`
 .. |P154_usedlibraries| replace:: `Adafruit BMP3XX Library`
-
+.. |P155_name| replace:: :cyan:`SML Smartmeter`
+.. |P155_type| replace:: :cyan:`Energy`
+.. |P155_typename| replace:: :cyan:`Energy - SML Smartmeter`
+.. |P155_porttype| replace:: `.`
+.. |P155_status| replace:: :green:`NORMAL`
+.. |P155_status_lb| replace:: `.`
+.. |P155_github| replace:: P155_Smartmeter.ino
+.. _P155_github: https://github.com/letscontrolit/ESPEasy/blob/mega/src/_P155_Smartmeter.ino
+.. |P155_usedby| replace:: `.`
+.. |P155_shortinfo| replace:: `SML/D0 Smartmeter energy sensor`
+.. |P155_maintainer| replace:: `Custom`
+.. |P155_compileinfo| replace:: `.`
+.. |P155_usedlibraries| replace:: `ESPeasySerial`
+.. |P156_name| replace:: :cyan:`General Modbus TCP`
+.. |P156_type| replace:: :cyan:`Energy`
+.. |P156_typename| replace:: :cyan:`General Modbus TCP`
+.. |P156_porttype| replace:: `.`
+.. |P156_status| replace:: :green:`NORMAL`
+.. |P156_status_lb| replace:: `.`
+.. |P156_github| replace:: P156_GeneralModbusTCP.ino
+.. _P156_github: https://github.com/letscontrolit/ESPEasy/blob/mega/src/_P156_GeneralModbusTCP.ino
+.. |P156_usedby| replace:: `.`
+.. |P156_shortinfo| replace:: `Modbus TCP Interface`
+.. |P156_maintainer| replace:: `Custom`
+.. |P156_compileinfo| replace:: `.`
+.. |P156_usedlibraries| replace:: `.`
 .. |P159_name| replace:: :cyan:`LD2410`
 .. |P159_type| replace:: :cyan:`Presence`
 .. |P159_typename| replace:: :cyan:`Presence - LD2410`

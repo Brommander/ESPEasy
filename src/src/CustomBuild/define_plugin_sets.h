@@ -1590,11 +1590,9 @@ To create/register a plugin, you have to :
 
 #define USES_P079 // Wemos Motoshield
 
-#define USES_P155 // Smartmeter (Stromzaehler auslesen)
-#define USES_P156 // Kostal (Wechselrichter ueber Modbus auslesen)
-#define USES_P157 // Varta (Speicher ueber Modbus auslesen)
-#define USES_P158 // I²C Analog Out
-#define USES_P160                                   // Gerneal Modubus TCP
+#define USES_P155                                   // Smartmeter (Stromzaehler auslesen)
+#define USES_P156                                   // General Modbus TCP
+#define USES_P158                                   // I²C Analog Out
 #if defined(SOC_DAC_SUPPORTED) && SOC_DAC_SUPPORTED // Only supported on ESP32 and ESP32-S2
 #define USES_P152                                   // ESP32 DAC
 #endif
@@ -4309,7 +4307,7 @@ To create/register a plugin, you have to :
 #if defined(PLUGIN_BUILD_MAX_ESP32)
 #define FEATURE_OPENMETEO_EVENT 1
 #else
-#define FEATURE_OPENMETEO_EVENT 0
+#define FEATURE_OPENMETEO_EVENT 1
 #endif
 #endif
 
