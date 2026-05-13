@@ -823,7 +823,7 @@ bool p156_sendRequest(uint8_t query)
 
   if (!p156_client.connected())
   {
-    if (!p156_client.connect(lIP, p156_activePort, 1000))
+    if (!p156_client.connect(lIP, p156_activePort, 500))
     {
       addLog(LOG_LEVEL_INFO, F("Inverter: SendRequest; connection failed"));
       return 0;

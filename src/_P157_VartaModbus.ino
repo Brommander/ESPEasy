@@ -555,7 +555,7 @@ bool p157_sendRequest(uint8_t query)
 
   if (!p157_client.connected())
   {
-    if (!p157_client.connect(lIP, 502, 1000))
+    if (!p157_client.connect(lIP, 502, 500))
     {
       addLog(LOG_LEVEL_INFO, F("Varta: SendRequest; connection failed"));
       return 0;
