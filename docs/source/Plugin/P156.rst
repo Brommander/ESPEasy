@@ -1,0 +1,267 @@
+.. include:: ../Plugin/_plugin_substitutions_p15x.repl
+.. _P156_page:
+
+|P156_typename|
+==================================================
+
+|P156_shortinfo|
+
+Plugin details
+--------------
+
+Type: |P156_type|
+
+Port Type: |P156_porttype|
+
+Name: |P156_name|
+
+Status ESP32: |P156_status|
+
+Status ESP8266: |P156_status_lb|
+
+GitHub: |P156_github|_
+
+Maintainer: |P156_maintainer|
+
+Used libraries: |P156_usedlibraries|
+
+Supported hardware
+------------------
+
+Supports any device communicating over Modbus TCP (Modbus over Ethernet/WiFi).
+Up to 4 registers can be read per task, each with an independent poll interval.
+
+Tested devices:
+
+* Kostal Plenticore inverter (Port 1502, Unit ID 71, Function 03, Float IEEE754)
+* Sungrow SH hybrid inverter (Port 502, Unit ID 1, Function 04, U16/S16/U32/S32)
+* Varta ELM storage system (Port 502, Unit ID 255, Function 03, U16/S16/U32)
+* Any Modbus TCP device with Function 03 or 04
+
+Precautions
+-----------
+
+The device must be reachable on the local network before the plugin attempts
+a connection. The plugin automatically waits for WiFi to be connected before
+making any TCP connection attempt.
+
+Modbus register addresses in this plugin use **PDU addressing** (0-based).
+If your device documentation uses 4xxxxx notation, subtract 400001 from the
+address shown (e.g. 400100 → 99).
+
+Hardware
+--------
+
+No additional hardware required. The device must be connected to the same
+network as the ESP32 via Ethernet or WiFi.
+
+.. csv-table::
+  :header: "Device", "Port", "Unit ID", "Function", "Notes"
+  :widths: 10, 5, 5, 8, 20
+
+  "Kostal Plenticore", "1502", "71", "03", "Float IEEE754"
+  "Sungrow SH", "502", "1", "04", "U16/S16/U32/S32, factor via formula"
+  "Varta ELM", "502", "255", "03", "U16/S16/U32"
+
+Configuration
+-------------
+
+**Name** A unique name for the task (example: **ModbusMeter**).
+
+**Enabled** The device can be enabled or disabled.
+
+Sensor
+^^^^^^
+
+Connection
+""""""""""
+
+**IPv4 Address** IP address of the Modbus device.
+
+**Port** TCP port of the Modbus device. Typical values: 502 or 1502.
+
+**Unit ID** Modbus unit identifier (slave address). Range: 1–255.
+
+**Function Code** Modbus read function:
+
+* ``03`` - Read Holding Registers
+* ``04`` - Read Input Registers
+
+Pause Groups
+""""""""""""
+
+Four independent pause groups control the poll interval for each query.
+Groups 1 and 2 use steps of 100 ms (max 25500 ms).
+Groups 3 and 4 use steps of 1000 ms (max 255 s).
+
+.. csv-table::
+  :header: "Group", "Step size", "Max interval"
+  :widths: 5, 8, 10
+
+  "Group 1", "100 ms", "25500 ms"
+  "Group 2", "100 ms", "25500 ms"
+  "Group 3", "1000 ms", "255 s"
+  "Group 4", "1000 ms", "255 s"
+
+Queries (4 Values)
+""""""""""""""""""
+
+Each of the 4 output values is configured independently:
+
+**Register Address** PDU address (decimal, 0--65535).
+
+.. note::
+
+   4xxxxx notation: subtract 400001 (e.g. 400100 -> 99).
+
+**Data Type** Format of the register data:
+
+.. csv-table::
+  :header: "Data Type", "Size", "Description"
+  :widths: 8, 5, 20
+
+  "U16", "2 bytes", "Unsigned 16-bit integer"
+  "S16", "2 bytes", "Signed 16-bit integer"
+  "U32", "4 bytes", "Unsigned 32-bit integer (big-endian word order)"
+  "S32", "4 bytes", "Signed 32-bit integer (big-endian word order)"
+  "Float", "4 bytes", "IEEE 754 single precision (e.g. Kostal)"
+  "U32 WS", "4 bytes", "Unsigned 32-bit, word-swapped (low word first, e.g. Varta)"
+  "S32 WS", "4 bytes", "Signed 32-bit, word-swapped (low word first)"
+
+**Pause Group** Assigns this query to one of the four pause groups.
+
+.. note::
+
+   Word-swapped types (U32 WS, S32 WS) are required for devices that send the
+   low word before the high word, such as the Varta ELM storage system.
+
+.. include:: DataAcquisition.repl
+
+* **Interval**: Controls how often values are published via events/MQTT.
+  The actual poll rate is controlled by the Pause Group settings.
+
+Output
+^^^^^^
+
+Output values
+"""""""""""""
+
+.. csv-table::
+  :header: "Value", "Description"
+  :widths: 5, 30
+
+  "Value 1", "Result of Query 1 register read"
+  "Value 2", "Result of Query 2 register read"
+  "Value 3", "Result of Query 3 register read"
+  "Value 4", "Result of Query 4 register read"
+
+Scaling factors can be applied using the ESPEasy formula field
+(e.g. ``%VALUE%*0.1`` for Sungrow registers that use 0.1 unit steps).
+
+Indicators (recommended settings)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. csv-table::
+  :header: "Indicator", "Value Name", "Interval", "Formula", "Extra information"
+  :widths: 10, 10, 5, 10, 20
+
+  "Value 1", "Power_W", "10", "", "Direct W value"
+  "Value 2", "Energy_kWh", "60", "%VALUE%*0.1", "Sungrow 0.1 kWh steps"
+  "Value 3", "BattSOC", "10", "%VALUE%*0.1", "Sungrow 0.1 % steps"
+  "Value 4", "BattVoltage", "10", "%VALUE%*0.1", "Sungrow 0.1 V steps"
+
+Register Tables
+---------------
+
+The following tables list all known register addresses for tested devices.
+The PDU address (comm address) is used directly in the plugin configuration.
+
+Kostal Plenticore
+^^^^^^^^^^^^^^^^^
+
+Connection: Port **1502**, Unit ID **71** (0x47), Function **03**, Data type **Float**,
+Recommended poll interval: 100 ms.
+
+.. csv-table::
+  :header: "#", "Name", "PDU Address", "Type", "Unit", "Value Name"
+  :widths: 3, 22, 8, 6, 5, 18
+
+  "1",  "INVERTERSTATE",          "56",  "Float", "-",   "InverterState"
+  "2",  "TOTAL_DC_POWER",         "100", "Float", "W",   "Total_DC_Power"
+  "3",  "HOME_CONS_BATT",         "106", "Float", "W",   "Home_Cons_Batt"
+  "4",  "HOME_CONS_GRID",         "108", "Float", "W",   "Home_Cons_Grid"
+  "5",  "HOME_CONS_PV",           "116", "Float", "W",   "Home_Cons_PV"
+  "6",  "TOTAL_HOME_CONS_BATT",   "110", "Float", "W",   "Total_Home_Cons_Batt"
+  "7",  "TOTAL_HOME_CONS_GRID",   "112", "Float", "W",   "Total_Home_Cons_Grid"
+  "8",  "TOTAL_HOME_CONS_PV",     "114", "Float", "W",   "Total_Home_Cons_PV"
+  "9",  "TOTAL_HOME_CONSUMPTION", "118", "Float", "W",   "Total_Home_Consumption"
+  "10", "TOTAL_AC_POWER",         "172", "Float", "W",   "Total_AC_Power"
+  "11", "BATT_CHARGE_CURRENT",    "190", "Float", "A",   "Batt_Charge_Current"
+  "12", "BATT_STATE_CHARGE",      "210", "Float", "%",   "Batt_State_Charge"
+  "13", "BATT_TEMPERATUR",        "214", "Float", "degC","Batt_Temperatur"
+  "14", "BATT_VOLTAGE",           "216", "Float", "V",   "Batt_Voltage"
+  "15", "TOTAL_YIELD",            "320", "Float", "kWh", "Total_Yield"
+  "16", "DAILY_YIELD",            "322", "Float", "kWh", "Daily_Yield"
+  "17", "YEARLY_YIELD",           "324", "Float", "kWh", "Yearly_Yield"
+  "18", "MONTHLY_YIELD",          "326", "Float", "kWh", "Monthly_Yield"
+
+Sungrow SH
+^^^^^^^^^^
+
+Connection: Port **502**, Unit ID **1** (0x01), Function **04**,
+Recommended poll interval: 100 ms.
+
+.. note::
+
+   PDU address = protocol address - 1.
+   Scaling via the ESPEasy formula field where noted.
+
+.. csv-table::
+  :header: "#", "Name", "PDU Address", "Type", "Unit", "Formula", "Value Name"
+  :widths: 3, 20, 9, 6, 5, 10, 18
+
+  "1",  "SG_RUNNING_STATE",    "13000", "U16", "-",   "1",         "SG_RunningState"
+  "2",  "SG_TOTAL_DC_POWER",   "5017",  "U32", "W",   "1",         "SG_TotalDCPower"
+  "3",  "SG_BATTERY_POWER",    "13022", "U16", "W",   "1",         "SG_BattPower"
+  "4",  "SG_LOAD_POWER",       "13008", "S32", "W",   "1",         "SG_LoadPower"
+  "5",  "SG_EXPORT_POWER",     "13010", "S32", "W",   "1",         "SG_ExportPower"
+  "6",  "SG_DAILY_PV_GEN",     "13002", "U16", "kWh", "%VALUE%*0.1", "SG_DailyPVGen"
+  "7",  "SG_TOTAL_PV_GEN",     "13003", "U32", "kWh", "%VALUE%*0.1", "SG_TotalPVGen"
+  "8",  "SG_DAILY_IMPORT",     "13036", "U16", "kWh", "%VALUE%*0.1", "SG_DailyImport"
+  "9",  "SG_TOTAL_IMPORT",     "13037", "U32", "kWh", "%VALUE%*0.1", "SG_TotalImport"
+  "10", "SG_TOTAL_AC_POWER",   "13034", "S32", "W",   "1",         "SG_TotalACPower"
+  "11", "SG_BATT_CURRENT",     "13021", "U16", "A",   "%VALUE%*0.1", "SG_BattCurrent"
+  "12", "SG_BATT_SOC",         "13023", "U16", "%",   "%VALUE%*0.1", "SG_BattSOC"
+  "13", "SG_BATT_TEMP",        "13025", "S16", "degC","%VALUE%*0.1", "SG_BattTemp"
+  "14", "SG_BATT_VOLTAGE",     "13020", "U16", "V",   "%VALUE%*0.1", "SG_BattVoltage"
+  "15", "SG_TOTAL_OUTPUT",     "5004",  "U32", "kWh", "%VALUE%*0.1", "SG_TotalOutput"
+  "16", "SG_DAILY_OUTPUT",     "5003",  "U16", "kWh", "%VALUE%*0.1", "SG_DailyOutput"
+  "17", "SG_DAILY_BATT_DISCH", "13026", "U16", "kWh", "%VALUE%*0.1", "SG_DailyBattDisch"
+  "18", "SG_TOTAL_BATT_DISCH", "13027", "U32", "kWh", "%VALUE%*0.1", "SG_TotalBattDisch"
+
+
+Varta ELM
+^^^^^^^^^
+
+Connection: Port **502**, Unit ID **255** (0xFF), Function **03**,
+Recommended poll interval: 200 ms.
+
+.. csv-table::
+  :header: "#", "Name", "PDU Address", "Type", "Unit", "Value Name"
+  :widths: 3, 16, 9, 6, 8, 16
+
+  "1", "STATE",         "1065", "S16", "-",  "State"
+  "2", "CHARGE_POWER",  "1066", "S16", "W",  "ChargePower"
+  "3", "CHARGE_LEVEL",  "1068", "S16", "%",  "ChargeLevel"
+  "4", "CHARGE_ENERGY", "1069", "U32", "Wh", "ChargeEnergy"
+  "5", "POWER_GRID",    "1078", "S16", "W",  "PowerGrid (neg = feed-in)"
+
+
+Change log
+----------
+
+.. versionadded:: 1.0
+  ...
+
+  |added|
+  Initial release version.
