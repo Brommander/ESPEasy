@@ -1068,16 +1068,18 @@ bool p155_readUint32(int startByte, int numBytes, uint32_t& result)
   return true;
 }
 
-// Read numBytes (1-4) big-endian from rxBuffer at startByte → int32_t (sign-extended)
+// static_cast<int32_t>(raw << shift) >> shift
+//   raw << shift  : uint32_t logical left shift  → sign bit of data moves to bit 31
+//   static_cast   : reinterpret as int32_t       → bit 31 becomes the sign bit
+//   >> shift      : int32_t arithmetic right shift → sign bit is repeated into upper bits
 //
-// Sign extension via arithmetic right shift:
-//   1. Shift LEFT so the sign bit of the original data lands at bit 31
-//   2. Shift RIGHT (arithmetic) fills all upper bits with the sign bit
+//   0xFF, numBytes=1, shift=24:
+//   uint32_t: 0x000000FF << 24 = 0xFF000000
+//   int32_t:  0xFF000000 >> 24 = 0xFFFFFFFF  (-1)   sign bit=1 → filled with 1s
 //
-// Example: 0xFF read as 1 byte
-//   shift = (4-1)*8 = 24
-//   0x000000FF << 24 = 0xFF000000   (sign bit at bit 31)
-//   0xFF000000 >> 24 = 0xFFFFFFFF   (arithmetic fill → -1)
+//   0x7F, numBytes=1, shift=24:
+//   uint32_t: 0x0000007F << 24 = 0x7F000000
+//   int32_t:  0x7F000000 >> 24 = 0x0000007F  (+127) sign bit=0 → filled with 0s
 bool p155_readInt32(int startByte, int numBytes, int32_t& result)
 {
   uint32_t raw = 0;
