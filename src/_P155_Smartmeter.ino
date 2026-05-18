@@ -79,10 +79,10 @@ const __FlashStringHelper* p155_getQueryString(uint8_t query,
                                                uint8_t model);
 const __FlashStringHelper* p155_getQueryValueString(uint8_t query,
                                                     uint8_t model);
-unsigned int               p155_getRegister(uint8_t query,
+uint16_t                   p155_getRegister(uint8_t query,
                                             uint8_t model);
-float                      p155_readVal(uint8_t      query,
-                                        unsigned int model);
+float                      p155_readVal(uint8_t query,
+                                        uint8_t model);
 void                       p155_handleSerialInD0();
 void                       p155_handleSerialInSML();
 void                       p155_parseValuesD0();
@@ -97,7 +97,7 @@ bool                       p155_byteArrayCompare(byte a1[],
                                                  int  a1len,
                                                  byte a2[],
                                                  int  a2len);
-void p155_deleteValues(unsigned int model);
+void p155_deleteValues(uint8_t model);
 
 // ============================================================
 // Data structures
@@ -404,7 +404,7 @@ boolean Plugin_155(uint8_t function, struct EventStruct *event, String& string)
 // ============================================================
 // Helper functions
 // ============================================================
-float p155_readVal(uint8_t query, unsigned int model)
+float p155_readVal(uint8_t query, uint8_t model)
 {
   if ((model == P155_MODEL_D0) && (query < P155_NR_OUTPUT_OPTIONS_D0)) {
     return p155_myDataD0[query].value;
@@ -416,7 +416,7 @@ float p155_readVal(uint8_t query, unsigned int model)
   return 0.0f;
 }
 
-unsigned int p155_getRegister(uint8_t query, uint8_t model)
+uint16_t p155_getRegister(uint8_t query, uint8_t model)
 {
   if (model == P155_MODEL_D0)
   {
@@ -590,8 +590,8 @@ void p155_handleSerialInSML()
     return;
   }
 
-  const unsigned long start = millis();
-  size_t available          = P155_MySerial->available();
+  const uint32_t start = millis();
+  size_t available     = P155_MySerial->available();
 
   while (available && timePassedSince(start) < 10) // while (P155_MySerial->available() && timePassedSince(start) < 100)
   {
@@ -906,8 +906,8 @@ void p155_handleSerialInD0()
     return;
   }
 
-  const unsigned long start = millis();
-  size_t available          = P155_MySerial->available();
+  const uint32_t start = millis();
+  size_t available     = P155_MySerial->available();
 
   while (available && timePassedSince(start) < 10)
   {
@@ -1104,7 +1104,7 @@ bool p155_byteArrayCompare(byte a1[], int a1len, byte a2[], int a2len)
   return true;
 }
 
-void p155_deleteValues(unsigned int model)
+void p155_deleteValues(uint8_t model)
 {
   if (model == P155_MODEL_D0) {
     for (int i = 0; i < P155_NR_OUTPUT_OPTIONS_D0; i++) {
