@@ -7,6 +7,9 @@
 #include "../Helpers/I2C_access.h"
 #include "../Helpers/StringConverter.h"
 
+#if FEATURE_EEPROM_EXTERNAL
+# include "../../ESPEasy/eeprom/Helpers/EEPROMExternal.h"
+#endif // if FEATURE_EEPROM_EXTERNAL
 #if FEATURE_I2C
 
 #include <Wire.h>
@@ -27,12 +30,12 @@ void initI2C() {
   {
     if (Settings.isI2CEnabled(i2cBus)) {
       #ifndef LIMIT_BUILD_SIZE
-      #if !FEATURE_I2C_MULTIPLE
+      # if !FEATURE_I2C_MULTIPLE
       addLog(LOG_LEVEL_INFO, F("INIT : I2C Bus"));
-      #else // if !FEATURE_I2C_MULTIPLE
+      # else // if !FEATURE_I2C_MULTIPLE
       addLog(LOG_LEVEL_INFO, concat(F("INIT : I2C Bus "), i2cBus));
-      #endif // if !FEATURE_I2C_MULTIPLE
-      #endif
+      # endif // if !FEATURE_I2C_MULTIPLE
+      #endif // ifndef BUILD_MINIMAL_OTA
       I2CSelectHighClockSpeed(i2cBus); // Set normal clock speed, on I2C Bus 1 (index 0)
     }
   }
@@ -75,62 +78,15 @@ void initI2C() {
       }
     }
   }
+
+  #if FEATURE_EEPROM_EXTERNAL
+  ESPEasy::eeprom::initializeEEPROMExternal();
+  #endif // if FEATURE_EEPROM_EXTERNAL
+
   I2CSelectHighClockSpeed(0); // Select first interface by default
 }
 
-void I2CSelectHighClockSpeed(uint8_t i2cBus) {
-  const uint32_t clockSpeed = Settings.getI2CClockSpeed(i2cBus);
-
-  I2CSelectClockSpeed(i2cBus, clockSpeed);
-}
-
-void I2CSelectLowClockSpeed(uint8_t i2cBus) {
-  const uint32_t clockSpeed = Settings.getI2CClockSpeedSlow(i2cBus);
-
-  I2CSelectClockSpeed(i2cBus, clockSpeed);
-}
-
-void I2CSelect_Max100kHz_ClockSpeed(uint8_t i2cBus) {
-  const uint32_t clockSpeed      = Settings.getI2CClockSpeed(i2cBus);
-  const uint32_t clockSpeed_Slow = Settings.getI2CClockSpeedSlow(i2cBus);
-
-  if (clockSpeed <= 100000) {
-    I2CSelectHighClockSpeed(i2cBus);
-  } else if (clockSpeed_Slow <= 100000) {
-    I2CSelectLowClockSpeed(i2cBus);
-  } else {
-    I2CSelectClockSpeed(i2cBus, 100000);
-  }
-}
-
-void I2CSelectClockSpeed(uint8_t i2cBus, uint32_t clockFreq) {
-  const int8_t   i2c_sda           = Settings.getI2CSdaPin(i2cBus);
-  const int8_t   i2c_scl           = Settings.getI2CSclPin(i2cBus);
-  const uint32_t ClockStretchLimit = Settings.getI2CClockStretch(i2cBus);
-
-  I2CBegin(i2c_sda, i2c_scl, clockFreq, ClockStretchLimit);
-}
-
-void I2CForceResetBus_swap_pins(uint8_t i2cBus, uint8_t address) {
-#if FEATURE_CLEAR_I2C_STUCK
-
-  if (!Settings.EnableClearHangingI2Cbus()) { return; }
-#endif // if FEATURE_CLEAR_I2C_STUCK
-
-  // As a final work-around, we temporary swap SDA and SCL, perform a scan and return pin order.
-  const int8_t   i2c_sda           = Settings.getI2CSdaPin(i2cBus);
-  const int8_t   i2c_scl           = Settings.getI2CSclPin(i2cBus);
-  const uint32_t ClockStretchLimit = Settings.getI2CClockStretch(i2cBus);
-
-  I2CBegin(i2c_scl, i2c_sda, 100000, ClockStretchLimit);
-  I2C_wakeup(address);
-  delay(1);
-
-  // Now we switch back to the correct pins
-  I2CSelectClockSpeed(i2cBus, 100000);
-}
-
-void I2CBegin(int8_t sda, int8_t scl, uint32_t clockFreq, uint32_t clockStretch) {
+static void I2CBegin(int8_t sda, int8_t scl, uint32_t clockFreq, uint32_t clockStretch) {
   #ifdef ESP32
   uint32_t lastI2CClockSpeed = Wire.getClock();
   #else // ifdef ESP32
@@ -144,10 +100,11 @@ void I2CBegin(int8_t sda, int8_t scl, uint32_t clockFreq, uint32_t clockStretch)
     // No need to change the clock speed.
     return;
   }
-  if (sda == -1 || scl == -1) {
+
+  if ((sda == -1) || (scl == -1)) {
 #ifdef ESP32
     Wire.end();
-#endif
+#endif // ifdef ESP32
     last_sda = sda;
     last_scl = scl;
     return;
@@ -200,6 +157,61 @@ void I2CBegin(int8_t sda, int8_t scl, uint32_t clockFreq, uint32_t clockStretch)
   }
 }
 
+static void I2CSelectClockSpeed(uint8_t i2cBus, uint32_t clockFreq) {
+  const int8_t   i2c_sda           = Settings.getI2CSdaPin(i2cBus);
+  const int8_t   i2c_scl           = Settings.getI2CSclPin(i2cBus);
+  const uint32_t ClockStretchLimit = Settings.getI2CClockStretch(i2cBus);
+
+  I2CBegin(i2c_sda, i2c_scl, clockFreq, ClockStretchLimit);
+}
+
+void I2CSelectHighClockSpeed(uint8_t i2cBus) {
+  const uint32_t clockSpeed = Settings.getI2CClockSpeed(i2cBus);
+
+  I2CSelectClockSpeed(i2cBus, clockSpeed);
+}
+
+void I2CSelectLowClockSpeed(uint8_t i2cBus) {
+  const uint32_t clockSpeed = Settings.getI2CClockSpeedSlow(i2cBus);
+
+  I2CSelectClockSpeed(i2cBus, clockSpeed);
+}
+
+void I2CSelect_Max100kHz_ClockSpeed(uint8_t i2cBus) {
+  const uint32_t clockSpeed      = Settings.getI2CClockSpeed(i2cBus);
+  const uint32_t clockSpeed_Slow = Settings.getI2CClockSpeedSlow(i2cBus);
+
+  if (clockSpeed <= 100000) {
+    I2CSelectHighClockSpeed(i2cBus);
+  } else if (clockSpeed_Slow <= 100000) {
+    I2CSelectLowClockSpeed(i2cBus);
+  } else {
+    I2CSelectClockSpeed(i2cBus, 100000);
+  }
+}
+
+
+void I2CForceResetBus_swap_pins(uint8_t i2cBus, uint8_t address) {
+#if FEATURE_CLEAR_I2C_STUCK
+
+  if (!Settings.EnableClearHangingI2Cbus()) { return; }
+#endif // if FEATURE_CLEAR_I2C_STUCK
+
+  // As a final work-around, we temporary swap SDA and SCL, perform a scan and return pin order.
+  const int8_t   i2c_sda           = Settings.getI2CSdaPin(i2cBus);
+  const int8_t   i2c_scl           = Settings.getI2CSclPin(i2cBus);
+  const uint32_t ClockStretchLimit = Settings.getI2CClockStretch(i2cBus);
+
+  I2CBegin(i2c_scl, i2c_sda, 100000, ClockStretchLimit);
+  I2C_wakeup(address);
+  delay(1);
+
+  // Now we switch back to the correct pins
+  I2CSelectClockSpeed(i2cBus, 100000);
+}
+
+
+
 #if FEATURE_I2CMULTIPLEXER
 
 // Check if the I2C Multiplexer is enabled
@@ -209,6 +221,7 @@ bool isI2CMultiplexerEnabled(uint8_t i2cBus) {
 }
 
 // Reset the I2C Multiplexer, if a pin is assigned for that. Pulled to low to force a reset.
+/*
 void I2CMultiplexerReset(uint8_t i2cBus) {
   const uint8_t Multiplexer_ResetPin = Settings.getI2CMultiplexerResetPin(i2cBus);
 
@@ -218,9 +231,10 @@ void I2CMultiplexerReset(uint8_t i2cBus) {
     digitalWrite(Multiplexer_ResetPin, HIGH);
   }
 }
+  */
 
 // Shift the bit in the right position when selecting a single channel
-uint8_t I2CMultiplexerShiftBit(uint8_t i2cBus, uint8_t i) {
+static uint8_t I2CMultiplexerShiftBit(uint8_t i2cBus, uint8_t i) {
   uint8_t toWrite               = 0;
   const int8_t Multiplexer_Type = Settings.getI2CMultiplexerType(i2cBus);
 
@@ -239,6 +253,25 @@ uint8_t I2CMultiplexerShiftBit(uint8_t i2cBus, uint8_t i) {
       break;
   }
   return toWrite;
+}
+
+void I2CMultiplexerSelectByBusAndMux(uint8_t i2cBus, bool singleMulti, int muxPort) {
+  uint8_t toWrite{};
+
+  if ((singleMulti && (muxPort > 0)) ||
+      (!singleMulti && (muxPort > -1))) {
+    if (!singleMulti) {
+      uint8_t i = muxPort;
+
+      if (i < 8) {
+        toWrite = I2CMultiplexerShiftBit(i2cBus, i);
+      }
+    } else {
+      toWrite = muxPort; // Bitpattern is already correctly stored
+    }
+  }
+
+  SetI2CMultiplexer(i2cBus, toWrite);
 }
 
 // As initially constructed by krikk in PR#254, quite adapted

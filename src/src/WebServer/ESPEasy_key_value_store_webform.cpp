@@ -6,21 +6,21 @@
 # include "../WebServer/Markup_Forms.h"
 
 WebFormItemParams::WebFormItemParams(
-  const String                       & label,
-  const String                       & id,
+  const String        & label,
+  const String        & id,
   KVS_StorageType::Enum storageType,
-  uint32_t                             key)
+  uint32_t              key)
   : _label(label), _id(id), _storageType(storageType), _key(key) {}
 
 WebFormItemParams::WebFormItemParams(
-  const __FlashStringHelper           *label,
-  const __FlashStringHelper           *id,
-  KVS_StorageType::Enum storageType,
-  uint32_t                             key)
+  const __FlashStringHelper *label,
+  const __FlashStringHelper *id,
+  KVS_StorageType::Enum      storageType,
+  uint32_t                   key)
   : _label(label), _id(id), _storageType(storageType), _key(key) {}
 
 # define CORRECT_RANGE(T, CT)                                                                 \
-          case KVS_StorageType::Enum::T:                                       \
+          case KVS_StorageType::Enum::T:                                                      \
             if (_max > std::numeric_limits<CT>::max()) _max = std::numeric_limits<CT>::max(); \
             if (_min < std::numeric_limits<CT>::min()) _min = std::numeric_limits<CT>::min(); \
             break;
@@ -29,15 +29,15 @@ void WebFormItemParams::checkRanges()
 {
   switch (_storageType)
   {
-    CORRECT_RANGE(int8_type,   int8_t)
-    CORRECT_RANGE(uint8_type,  uint8_t)
-    CORRECT_RANGE(int16_type,  int16_t)
-    CORRECT_RANGE(uint16_type, uint16_t)
-    CORRECT_RANGE(int32_type,  int32_t)
-    CORRECT_RANGE(uint32_type, uint32_t)
-    CORRECT_RANGE(float_type,  float)
-    CORRECT_RANGE(uint64_type, uint64_t)
-    CORRECT_RANGE(int64_type,  int64_t)
+  CORRECT_RANGE(int8_type,   int8_t)
+  CORRECT_RANGE(uint8_type,  uint8_t)
+  CORRECT_RANGE(int16_type,  int16_t)
+  CORRECT_RANGE(uint16_type, uint16_t)
+  CORRECT_RANGE(int32_type,  int32_t)
+  CORRECT_RANGE(uint32_type, uint32_t)
+  CORRECT_RANGE(float_type,  float)
+  CORRECT_RANGE(uint64_type, uint64_t)
+  CORRECT_RANGE(int64_type,  int64_t)
 
     //  CORRECT_RANGE(double_type, double)
     default: break;
@@ -45,20 +45,35 @@ void WebFormItemParams::checkRanges()
 }
 
 bool showWebformItem(const ESPEasy_key_value_store& store,
-                     WebFormItemParams              params)
+                     WebFormItemParams&&              params)
 {
   params.checkRanges();
   String id = params._id.isEmpty() ? concat(F("KVS_ID_"), params._key) : params._id;
 
   switch (params._storageType)
   {
+    case KVS_StorageType::Enum::ip_type:
+    {
+      IPAddress value;
+
+      if (!store.getValue(params._key, value) && !params._defaultValue.isEmpty())
+      {
+        params._defaultValue.toIPAddress(value);
+      }
+      addFormIPBox(
+        params._label,
+        id,
+        value);
+      return true;
+    }
+
     case KVS_StorageType::Enum::string_type:
     {
       String value;
 
       if (!store.getValueAsString(params._key, value))
       {
-        value = params._defaultStringValue;
+        value = params._defaultValue.toString();
       }
 
       if (params._password) {
@@ -96,7 +111,7 @@ bool showWebformItem(const ESPEasy_key_value_store& store,
     {
       int64_t value;
 
-      if (!store.getValueAsInt(params._key, value)) { value = params._defaultIntValue; }
+      if (!store.getValueAsInt(params._key, value)) { value = params._defaultValue.toInt(); }
       addFormNumericBox(
         params._label,
         id,
@@ -127,7 +142,7 @@ bool showWebformItem(const ESPEasy_key_value_store& store,
     {
       float value{};
 
-      if (!store.getValue(params._key, value)) { value = params._defaultFloatValue; }
+      if (!store.getValue(params._key, value)) { value = params._defaultValue.toFloat(); }
       addFormFloatNumberBox(
         params._label,
         id,
@@ -150,7 +165,7 @@ bool showWebformItem(const ESPEasy_key_value_store& store,
     {
       bool value{};
 
-      if (!store.getValue(params._key, value)) { value = params._defaultIntValue != 0; }
+      if (!store.getValue(params._key, value)) { value = params._defaultValue.toInt() != 0; }
       addFormCheckBox(
         params._label,
         id,
@@ -170,20 +185,20 @@ void showFormSelector(const ESPEasy_key_value_store& store,
 {
   int64_t value{};
 
-  if (!store.getValueAsInt(params._key, value)) { value = params._defaultIntValue; }
+  if (!store.getValueAsInt(params._key, value)) { value = params._defaultValue.toInt(); }
 
   selector.addFormSelector(params._label, params._id, value);
 }
 
-void storeWebformItem(ESPEasy_key_value_store            & store,
-                      uint32_t                             key,
-                      KVS_StorageType::Enum storageType,
-                      const __FlashStringHelper           *id) { storeWebformItem(store, key, storageType, String(id)); }
+void storeWebformItem(ESPEasy_key_value_store  & store,
+                      uint32_t                   key,
+                      KVS_StorageType::Enum      storageType,
+                      const __FlashStringHelper *id) { storeWebformItem(store, key, storageType, String(id)); }
 
-void storeWebformItem(ESPEasy_key_value_store            & store,
-                      uint32_t                             key,
-                      KVS_StorageType::Enum storageType,
-                      const String                       & id)
+void storeWebformItem(ESPEasy_key_value_store& store,
+                      uint32_t                 key,
+                      KVS_StorageType::Enum    storageType,
+                      const String           & id)
 {
   String _id = id.isEmpty() ? concat(F("KVS_ID_"), key) : id;
 
@@ -193,7 +208,13 @@ void storeWebformItem(ESPEasy_key_value_store            & store,
   }
 
   if (hasArg(_id)) {
-    store.setValue(storageType, key, webArg(_id));
+    if (storageType == KVS_StorageType::Enum::ip_type) {
+      IPAddress ip;
+      ip.fromString(webArg(_id));
+      store.setValue(key, ip);
+    } else {
+      store.setValue(storageType, key, webArg(_id));
+    }
   }
 }
 

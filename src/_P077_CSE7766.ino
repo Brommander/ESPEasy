@@ -44,18 +44,19 @@ boolean Plugin_077(uint8_t function, struct EventStruct *event, String& string) 
   switch (function) {
     case PLUGIN_DEVICE_ADD: {
       auto& dev = Device[++deviceCount];
-      dev.Number           = PLUGIN_ID_077;
-      dev.Type             = DEVICE_TYPE_SERIAL;
-      dev.VType            = Sensor_VType::SENSOR_TYPE_QUAD;
-      dev.FormulaOption    = true;
-      dev.ValueCount       = 4;
-      dev.OutputDataType   = Output_Data_type_t::Simple;
-      dev.SendDataOption   = true;
-      dev.TimerOption      = true;
-      dev.TimerOptional    = true;
-      dev.PluginStats      = true;
-      dev.TaskLogsOwnPeaks = true;
-      dev.MqttStateClass   = true;
+      dev.Number             = PLUGIN_ID_077;
+      dev.Type               = DEVICE_TYPE_SERIAL;
+      dev.VType              = Sensor_VType::SENSOR_TYPE_QUAD;
+      dev.FormulaOption      = true;
+      dev.ValueCount         = 4;
+      dev.OutputDataType     = Output_Data_type_t::Simple;
+      dev.SendDataOption     = true;
+      dev.TimerOption        = true;
+      dev.TimerOptional      = true;
+      dev.PluginStats        = true;
+      dev.TaskLogsOwnPeaks   = true;
+      dev.MqttStateClass     = true;
+      dev.SerialPortsAllowed = INCLUDE_HW_SERIAL;
       break;
     }
 
@@ -265,7 +266,11 @@ boolean Plugin_077(uint8_t function, struct EventStruct *event, String& string) 
         uint8_t varNr            = VARS_PER_TASK;
         const float pulsesPerKwh = P077_data->cf_frequency * 3600;
         const float kWh          = P077_data->cf_pulses / pulsesPerKwh;
-        pluginWebformShowValue(event->TaskIndex, varNr++, F("kWh"), toString(kWh, 3), true);
+        TaskValuesWriterHelper data(event);
+
+        data.setWriteRegularTaskValuesFirst();
+        data.writeCustom(varNr++, F("kWh"), toString(kWh, 3));
+        success = true; // Do not write other taskvalues
       }
       break;
     }

@@ -233,6 +233,14 @@ void addFormIPBox(const String& label,
                   const String& id,
                   const uint8_t ip[4]);
 
+void addFormIPBox(const __FlashStringHelper *label,
+                  const __FlashStringHelper *id,
+                  const IPAddress& ip);
+
+void addFormIPBox(const String& label,
+                  const String& id,
+                  const IPAddress& ip);
+
 // ********************************************************************************
 // Add a MAC address Box form
 // ********************************************************************************
@@ -314,6 +322,7 @@ void addFormPinStateSelect(int gpio,
 
 int getFormItemInt(const __FlashStringHelper * key, int defaultValue);
 int getFormItemInt(const String& key, int defaultValue);
+uint64_t getFormItemUInt64(const String& key, uint64_t defaultValue);
 
 bool getCheckWebserverArg_int(const String& key,
                               int         & value);
@@ -321,29 +330,43 @@ bool getCheckWebserverArg_int(const String& key,
 bool getCheckWebserverArg_int(const String& key,
                               uint32_t      & value);
 
-bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                int         & value);
+bool getCheckWebserverArg_int(const String& key,
+                              uint64_t      & value);
 
-bool update_whenset_FormItemInt(const String& key,
-                                int         & value);
-
-bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                uint32_t    & value);
-
-bool update_whenset_FormItemInt(const String& key,
-                                uint32_t    & value);
+bool getCheckWebserverArg_int(const String& key,
+                              int64_t      & value);
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                int8_t      & value);
+                                int         & value,
+                                bool* changed = nullptr);
 
 bool update_whenset_FormItemInt(const String& key,
-                                int8_t      & value);
+                                int         & value,
+                                bool* changed = nullptr);
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                uint8_t     & value);
+                                uint32_t    & value,
+                                bool* changed = nullptr);
 
 bool update_whenset_FormItemInt(const String& key,
-                                uint8_t     & value);
+                                uint32_t    & value,
+                                bool* changed = nullptr);
+
+bool update_whenset_FormItemInt(const __FlashStringHelper * key,
+                                int8_t      & value,
+                                bool* changed = nullptr);
+
+bool update_whenset_FormItemInt(const String& key,
+                                int8_t      & value,
+                                bool* changed = nullptr);
+
+bool update_whenset_FormItemInt(const __FlashStringHelper * key,
+                                uint8_t     & value,
+                                bool* changed = nullptr);
+
+bool update_whenset_FormItemInt(const String& key,
+                                uint8_t     & value,
+                                bool* changed = nullptr);
 
 // Note: Checkbox values will not appear in POST Form data if unchecked.
 // So if webserver does not have an argument for a checkbox form, it means it should be considered unchecked.

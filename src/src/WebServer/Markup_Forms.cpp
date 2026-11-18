@@ -9,6 +9,7 @@
 
 #include "../Helpers/Hardware_GPIO.h"
 #include "../Helpers/Hardware_device_info.h"
+#include "../Helpers/Networking.h"
 #include "../Helpers/Numerical.h"
 #include "../Helpers/StringConverter.h"
 #include "../Helpers/StringGenerator_GPIO.h"
@@ -380,34 +381,63 @@ bool getFormPassword(const String& id, String& password)
   return !equals(password, F(MARKUP_FORMS_PASSWORD_MASK_ASTERISKS));
 }
 
-// ********************************************************************************
-// Add a IP Box form
-// ********************************************************************************
-void addFormIPBox(const __FlashStringHelper *label,
-                  const __FlashStringHelper *id,
-                  const uint8_t ip[4])
-{
-  addFormIPBox(String(label), String(id), ip);
-}
-
 void addFormTextBox(const String& label, const String& id, const String& value)
 {
   addRowLabel_tr_id(label, id);
 
   addHtml(strformat(
-    F("<input class='wide' type='text' name='%s' id='%s' value='%s'>"),
-    id.c_str(),
-    id.c_str(),
-    value.c_str()
-  ));
+            F("<input class='wide' type='text' name='%s' id='%s' value='%s'>"),
+            id.c_str(),
+            id.c_str(),
+            value.c_str()
+            ));
 }
 
-void addFormIPBox(const String& label, const String& id, const uint8_t ip[4])
+// ********************************************************************************
+// Add a IP Box form
+// ********************************************************************************
+void addFormIPBox(const __FlashStringHelper *label,
+                  const __FlashStringHelper *id,
+                  const uint8_t              ip[4]) { addFormIPBox(String(label), String(id), IPAddress(ip)); }
+
+void addFormIPBox(const String& label, const String& id, const uint8_t ip[4]) { addFormIPBox(label, id, IPAddress(ip)); }
+
+void addFormIPBox(const __FlashStringHelper *label,
+                  const __FlashStringHelper *id,
+                  const IPAddress          & ip) { addFormIPBox(String(label), String(id), ip); }
+
+void addFormIPBox(const String   & label,
+                  const String   & id,
+                  const IPAddress& ip)
 {
-  const bool empty_IP = (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0);
+  const bool empty_IP = !IPAddressSet(ip);
 
   addFormTextBox(label, id, (empty_IP) ? EMPTY_STRING : formatIP(ip));
+
+  /*
+     // TODO TD-er: Option to validate IP in HTML
+     //
+     // IP input HTML validation from:
+     // Source - https://stackoverflow.com/a/54796814
+     // Posted by ptay, modified by community. See post 'Timeline' for change history
+     // Retrieved 2026-04-30, License - CC BY-SA 4.0
+     //
+     // <input type="text" minlength="7" maxlength="15" size="15" pattern="^(?>(\d|[1-9]\d{2}|1\d\d|2[0-4]\d|25[0-5])\.){3}(?1)$">
+
+     const String value = (empty_IP) ? EMPTY_STRING : formatIP(ip);
+     addRowLabel_tr_id(label, id);
+
+     // Validation only for IPv4 address
+     addHtml(strformat(
+              F("<input class='wide' type='text' minlength='7' maxlength='15' size='15'
+                 pattern='^(?>(\\d|[1-9]\\d{2}|1\\d\\d|2[0-4]\\d|25[0-5])\\.){3}(?1)$' name='%s' id='%s' value='%s'>"),
+              id.c_str(),
+              id.c_str(),
+              value.c_str()
+              ));
+   */
 }
+
 
 // ********************************************************************************
 // Add a MAC Box form
@@ -528,6 +558,9 @@ void addFormSelectorI2C(const String& id,
   {
     String option = formatToHex_decimal(addresses[x]);
 
+    if (0 == addresses[x]) {
+      option = F("Disabled");
+    } else
     if (((x == 0) && (defaultAddress == 0)) || (defaultAddress == addresses[x])) {
       option += F(" (default)");
     }
@@ -652,36 +685,61 @@ int getFormItemInt(const String& key, int defaultValue) {
   return value;
 }
 
+uint64_t getFormItemUInt64(const String& key, uint64_t defaultValue)
+{
+  uint64_t value = defaultValue;
+
+  getCheckWebserverArg_int(key, value);
+  return value;
+}
+
 bool getCheckWebserverArg_int(const String& key, int& value) {
-  const String valueStr = webArg(key);
-  if (valueStr.isEmpty()) return false;
-  // FIXME TD-er: Since ESP_IDF 5.1 int32_t != int
-  int32_t tmp{};
-  const bool res = validIntFromString(valueStr, tmp);
+  int64_t tmp{};
+  if (!getCheckWebserverArg_int(key, tmp)) return false;
   value = tmp;
-  return res;
+  return true;
 }
 
 bool getCheckWebserverArg_int(const String& key,
                               uint32_t      & value) {
+  uint64_t tmp{};
+  if (!getCheckWebserverArg_int(key, tmp)) return false;
+  value = tmp;
+  return true;
+}
+
+bool getCheckWebserverArg_int(const String& key,
+                              uint64_t      & value) 
+{
   const String valueStr = webArg(key);
   if (valueStr.isEmpty()) return false;
-  uint32_t tmp{};
-  const bool res = validUIntFromString(valueStr, tmp);
-  value = tmp;
+  const bool res = validUInt64FromString(valueStr, value);
+  return res;
+}
+
+bool getCheckWebserverArg_int(const String& key,
+                              int64_t      & value)
+{
+  const String valueStr = webArg(key);
+  if (valueStr.isEmpty()) return false;
+  const bool res = validInt64FromString(valueStr, value);
   return res;
 }
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                int         & value) 
+                                int         & value,
+                                bool* changed) 
 {
-  return update_whenset_FormItemInt(String(key), value);
+  return update_whenset_FormItemInt(String(key), value, changed);
 }
 
-bool update_whenset_FormItemInt(const String& key, int& value) {
+bool update_whenset_FormItemInt(const String& key, int& value,
+                                bool* changed) {
   int tmpVal;
 
   if (getCheckWebserverArg_int(key, tmpVal)) {
+    if (changed != nullptr && value != tmpVal)
+      *changed = true;
     value = tmpVal;
     return true;
   }
@@ -689,17 +747,21 @@ bool update_whenset_FormItemInt(const String& key, int& value) {
 }
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                uint32_t    & value) 
+                                uint32_t    & value,
+                                bool* changed) 
 {
-  return update_whenset_FormItemInt(String(key), value);
+  return update_whenset_FormItemInt(String(key), value, changed);
 }
 
 bool update_whenset_FormItemInt(const String& key,
-                                uint32_t    & value)
+                                uint32_t    & value,
+                                bool* changed)
 {
   uint32_t tmpVal;
 
   if (getCheckWebserverArg_int(key, tmpVal)) {
+    if (changed != nullptr && value != tmpVal)
+      *changed = true;
     value = tmpVal;
     return true;
   }
@@ -708,16 +770,20 @@ bool update_whenset_FormItemInt(const String& key,
 
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                int8_t& value) 
+                                int8_t& value,
+                                bool* changed) 
 {
-  return update_whenset_FormItemInt(String(key), value);
+  return update_whenset_FormItemInt(String(key), value, changed);
 }
 
 
-bool update_whenset_FormItemInt(const String& key, int8_t& value) {
+bool update_whenset_FormItemInt(const String& key, int8_t& value,
+                                bool* changed) {
   int tmpVal;
 
   if (getCheckWebserverArg_int(key, tmpVal)) {
+    if (changed != nullptr && value != tmpVal)
+      *changed = true;
     value = tmpVal;
     return true;
   }
@@ -725,16 +791,20 @@ bool update_whenset_FormItemInt(const String& key, int8_t& value) {
 }
 
 bool update_whenset_FormItemInt(const __FlashStringHelper * key,
-                                uint8_t& value) 
+                                uint8_t& value,
+                                bool* changed) 
 {
-  return update_whenset_FormItemInt(String(key), value);
+  return update_whenset_FormItemInt(String(key), value, changed);
 }
 
 
-bool update_whenset_FormItemInt(const String& key, uint8_t& value) {
+bool update_whenset_FormItemInt(const String& key, uint8_t& value,
+                                bool* changed) {
   int tmpVal;
 
   if (getCheckWebserverArg_int(key, tmpVal)) {
+    if (changed != nullptr && value != tmpVal)
+      *changed = true;
     value = tmpVal;
     return true;
   }

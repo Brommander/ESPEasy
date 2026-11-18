@@ -60,7 +60,7 @@ Configuration
 I2C Options 
 ^^^^^^^^^^^^
 
-* The available settings here depend on the build used. At least the **Force Slow I2C speed** option is available, but selections for the I2C Multiplexer can also be shown. For details see the :ref:`Hardware_page`
+* The available settings here depend on the build used. At least the **Force Slow I2C speed** option is available, but selections for the I2C Multiplexer can also be shown. For details see the :ref:`i2c-bus` page
 
 * **I2C Address**: The address the device is using. Depending on the board used, when available a SDO or ADD(R) pin, can be used to select the used address. If that address selection is not available, then an I2C multiplexer (in a matching ESPEasy build) can be used to use multiple sensors on a single ESPEasy unit.
 
@@ -99,7 +99,7 @@ Sensitivity
 
 * **Release treshold (1..255)** The amount of 'touch' until a touch is no longer registered (released). This is the global configuration value, see below for per-key configuration.
 
-* **Panel sensitivity** When having direct access to the keypad, the sensitivity should be set to Normal. When mounting the keypad behind a sheet of glass or another capacitive inert material, the sensitivity can be set to Extra sensitive, to accomodate for a glass sheet of 4-6 mm.
+* **Panel sensitivity** When having direct access to the keypad, the sensitivity should be set to Normal. When mounting the keypad behind a sheet of glass or another capacitive inert material, the sensitivity can be set to Extra sensitive, to accommodate for a glass sheet of 4-6 mm.
 
 .. image:: P062_PanelSensitivityOptions.png
   :alt: Panel sensitivity options.

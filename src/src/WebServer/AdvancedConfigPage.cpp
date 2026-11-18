@@ -10,6 +10,9 @@
 
 #include "../../ESPEasy/net/wifi/ESPEasyWifi.h"
 
+#if FEATURE_RTC_SRAM_STORAGE
+#include "../../ESPEasy/eeprom/Helpers/RTCSRAMStorage.h"
+#endif // if FEATURE_RTC_SRAM_STORAGE
 
 #include "../Globals/ESPEasy_time.h"
 #include "../Globals/Settings.h"
@@ -29,6 +32,114 @@ void setLogLevelFor(LogDestination destination, LabelType::Enum label) {
   setLogLevelFor(destination, getFormItemInt(getInternalLabel(label)));
 }
 
+static void addFormDstSelect(bool isStart, uint16_t choice) {
+  uint16_t tmpstart(choice);
+  uint16_t tmpend(choice);
+
+  if (!TimeChangeRule(choice, 0).isValid()) {
+    time_zone.getDefaultDst_flash_values(tmpstart, tmpend);
+  }
+  TimeChangeRule rule(isStart ? tmpstart : tmpend, 0);
+  {
+    const __FlashStringHelper *  week[] = { F("Last"), F("1st"), F("2nd"), F("3rd"), F("4th") };
+    constexpr int weekValues[] = { 0, 1, 2, 3, 4 };
+    addRowLabel(concat(
+      isStart ? F("Start")  : F("End"),
+      F(" (week, dow, month)")));
+
+    const FormSelectorOptions selector(NR_ELEMENTS(weekValues), week, weekValues);
+    selector.addSelector(
+      isStart ? F("dststartweek")  : F("dstendweek"), 
+      rule.week);
+  }
+  html_BR();
+  {
+    const __FlashStringHelper *  dow[] = { F("Sun"), F("Mon"), F("Tue"), F("Wed"), F("Thu"), F("Fri"), F("Sat") };
+    constexpr int dowValues[]  = { 1, 2, 3, 4, 5, 6, 7 };
+
+    const FormSelectorOptions selector(NR_ELEMENTS(dowValues), dow, dowValues);
+    selector.addSelector(
+      isStart ? F("dststartdow")   : F("dstenddow"),
+      rule.dow);
+  }
+  html_BR();
+  {
+    const __FlashStringHelper * month[] = { F("Jan"), F("Feb"), F("Mar"), F("Apr"), F("May"), F("Jun"), F("Jul"), F("Aug"), F("Sep"), F("Oct"), F("Nov"), F(
+                             "Dec") };
+    constexpr int monthValues[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+
+    const FormSelectorOptions selector(NR_ELEMENTS(monthValues), month, monthValues);
+    selector.addSelector(
+      isStart ? F("dststartmonth") : F("dstendmonth"),
+      rule.month);
+  }
+
+  addFormNumericBox(
+    isStart ? F("Start (localtime, e.g. 2h&rarr;3h)")  : F("End (localtime, e.g. 3h&rarr;2h)"),
+    isStart ? F("dststarthour")  : F("dstendhour"),
+    rule.hour, 0, 23);
+  addUnit(isStart ? F("hour &#x21b7;") : F("hour &#x21b6;"));
+}
+
+
+#if FEATURE_EXT_RTC
+static void addFormExtTimeSourceSelect(const __FlashStringHelper * label, const __FlashStringHelper * id, ExtTimeSource_e choice)
+{
+  addRowLabel(label);
+  const __FlashStringHelper * options[] = {
+    F("None"),
+    toString(ExtTimeSource_e::DS1307),
+    toString(ExtTimeSource_e::DS3231),
+    toString(ExtTimeSource_e::DS3232),
+    toString(ExtTimeSource_e::PCF8523),
+    toString(ExtTimeSource_e::PCF8563),
+    #if FEATURE_EXT_RTC_PCF8583
+    toString(ExtTimeSource_e::PCF8583),
+    toString(ExtTimeSource_e::PCF8583a),
+    #endif // if FEATURE_EXT_RTC_PCF8583
+  };
+  constexpr int optionValues[] = { 
+    static_cast<int>(ExtTimeSource_e::None),
+    static_cast<int>(ExtTimeSource_e::DS1307),
+    static_cast<int>(ExtTimeSource_e::DS3231),
+    static_cast<int>(ExtTimeSource_e::DS3232),
+    static_cast<int>(ExtTimeSource_e::PCF8523),
+    static_cast<int>(ExtTimeSource_e::PCF8563),
+    #if FEATURE_EXT_RTC_PCF8583
+    static_cast<int>(ExtTimeSource_e::PCF8583),
+    static_cast<int>(ExtTimeSource_e::PCF8583a),
+    #endif // if FEATURE_EXT_RTC_PCF8583
+    };
+
+  const FormSelectorOptions selector(NR_ELEMENTS(optionValues), options, optionValues);
+  selector.addSelector(id, static_cast<int>(choice));
+}
+#endif
+
+static void addFormLogLevelSelect(LabelType::Enum label, int choice)
+{
+  #ifdef BUILD_NO_DEBUG
+  if (choice > LOG_LEVEL_INFO) choice = LOG_LEVEL_INFO;
+  #endif
+
+  addRowLabel(getLabel(label));
+  addLogLevelFormSelectorOptions(getInternalLabel(label), choice);
+}
+
+#if FEATURE_SYSLOG
+static void addFormLogFacilitySelect(const __FlashStringHelper * label, const __FlashStringHelper * id, int choice)
+{
+  addRowLabel(label);
+  const __FlashStringHelper * options[] =
+  { F("Kernel"), F("User"),   F("Daemon"),   F("Message"), F("Local0"),  F("Local1"),
+    F("Local2"), F("Local3"), F("Local4"),   F("Local5"),  F("Local6"),  F("Local7") };
+  const int optionValues[] = { 0, 1, 3, 5, 16, 17, 18, 19, 20, 21, 22, 23 };
+
+  const FormSelectorOptions selector(NR_ELEMENTS(options), options, optionValues);
+  selector.addSelector(id, choice);
+}
+#endif
+
 // ********************************************************************************
 // Web Interface config page
 // ********************************************************************************
@@ -37,15 +148,11 @@ void handle_advanced() {
   checkRAM(F("handle_advanced"));
   #endif
 
-  if (!isLoggedIn()) { return; }
-  navMenuIndex = MENU_INDEX_TOOLS;
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  if (!startStream_send_stdTemplate(MENU_INDEX_TOOLS)) { return; }
 
   if (!webArg(F("edit")).isEmpty())
   {
-//    Settings.MessageDelay_unused = getFormItemInt(F("messagedelay"));
-    Settings.IP_Octet     = webArg(F("ip")).toInt();
+    // Settings.IP_Octet_unused     = webArg(F("ip")).toInt(); // No longer applicable after 2026-Network rewrite-merged
     strncpy_webserver_arg(Settings.NTPHost, F("ntphost"));
     Settings.TimeZone = getFormItemInt(F("timezone"));
     TimeChangeRule dst_start(getFormItemInt(F("dststartweek")), getFormItemInt(F("dststartdow")), getFormItemInt(F("dststartmonth")), getFormItemInt(F("dststarthour")), Settings.TimeZone);
@@ -107,10 +214,6 @@ void handle_advanced() {
     Settings.ArduinoOTAEnable            = isFormItemChecked(F("arduinootaenable"));
     Settings.UseRTOSMultitasking         = isFormItemChecked(F("usertosmultitasking"));
 
-    // MQTT settings now moved to the controller settings.
-//    Settings.MQTTRetainFlag_unused              = isFormItemChecked(F("mqttretainflag"));
-//    Settings.MQTTUseUnitNameAsClientId   = isFormItemChecked(F("mqttuseunitnameasclientid"));
-//    Settings.uniqueMQTTclientIdReconnect(isFormItemChecked(F("uniquemqttclientidreconnect")));
     Settings.Latitude  = getFormItemFloat(F("latitude"));
     Settings.Longitude = getFormItemFloat(F("longitude"));
     #ifdef WEBSERVER_NEW_RULES
@@ -169,6 +272,9 @@ void handle_advanced() {
     #if FEATURE_MQTT_CONNECT_BACKGROUND
     Settings.MQTTConnectInBackground(isFormItemChecked(LabelType::MQTT_CONNECT_IN_BACKGROUND));
     #endif // if FEATURE_MQTT_CONNECT_BACKGROUND
+    #if FEATURE_MQTT_DISCOVER
+    Settings.MQTTDiscoverGroupInclTaskname(isFormItemChecked(LabelType::MQTT_DISCOVER_GROUP_INCL_TASKNAME));
+    #endif // if FEATURE_MQTT_DISCOVER
     #if FEATURE_COLORIZE_CONSOLE_LOGS
     Settings.ColorizeSerialLog(isFormItemChecked(LabelType::COLORIZE_CONSOLE_LOGS));
     #endif
@@ -180,7 +286,8 @@ void handle_advanced() {
     }
   }
 
-  addHtml(F("<form  method='post'>"));
+  html_add_form();
+
   html_table_class_normal();
 
   addFormHeader(F("Advanced Settings"), F("RTDTools/Tools.html#advanced"));
@@ -199,18 +306,6 @@ void handle_advanced() {
   addFormCheckBox(F("SendToHTTP wait for ack"), F("sendtohttp_ack"), Settings.SendToHttp_ack());
   addFormCheckBox(F("SendToHTTP Follow Redirects"), F("sendtohttp_redir"), Settings.SendToHTTP_follow_redirects());
 
-  /*
-  // MQTT settings now moved to the controller settings.
-  addFormSubHeader(F("Controller Settings"));
-
-  addFormNumericBox(F("Message Interval"), F("messagedelay"), Settings.MessageDelay_unused, 0, INT_MAX);
-  addUnit(F("ms"));
-
-  addFormCheckBox(F("MQTT Retain Msg"), F("mqttretainflag"), Settings.MQTTRetainFlag_unused);
-  addFormCheckBox(F("MQTT use unit name as ClientId"),    F("mqttuseunitnameasclientid"),   Settings.MQTTUseUnitNameAsClientId);
-  addFormCheckBox(F("MQTT change ClientId at reconnect"), F("uniquemqttclientidreconnect"), Settings.uniqueMQTTclientIdReconnect_unused());
-*/
-
   addFormSubHeader(F("Time Source"));
 
   addFormCheckBox(F("Use NTP"), F("usentp"), Settings.UseNTP());
@@ -220,6 +315,12 @@ void handle_advanced() {
   if (Settings.ExtTimeSource() != ExtTimeSource_e::None) {
     addFormNote(concat(getLabel(LabelType::EXT_RTC_UTC_TIME), F(": ")) + getValue(LabelType::EXT_RTC_UTC_TIME));
   }
+  #if FEATURE_RTC_SRAM_STORAGE
+  if (ESPEasy::eeprom::checkRTCSRAMEnabled()) {
+    addRowLabel(F("'WriteRTC' slots available"));
+    addHtmlInt(ESPEasy::eeprom::getRTCSRAMMaxSlots());
+  }
+  #endif // if FEATURE_RTC_SRAM_STORAGE
   #if FEATURE_I2C_MULTIPLE
   {
     const uint8_t i2cBus = Settings.getI2CInterfaceRTC();
@@ -273,8 +374,7 @@ void handle_advanced() {
   serialHelper_webformLoad(
     static_cast<ESPEasySerialPort>(Settings.console_serial_port), 
     Settings.console_serial_rxpin, 
-    Settings.console_serial_txpin, 
-    true);
+    Settings.console_serial_txpin);
 
   // Show serial port selection
   addFormPinSelect(
@@ -288,7 +388,7 @@ void handle_advanced() {
     F("taskdevicepin2"), 
     Settings.console_serial_txpin);
 
-  html_add_script(F("document.getElementById('serPort').onchange();"), false);
+  html_add_script(F("elId('serPort').onchange();"), false);
 #if USES_ESPEASY_CONSOLE_FALLBACK_PORT
   addFormCheckBox(LabelType::CONSOLE_FALLBACK_TO_SERIAL0);
 #endif
@@ -306,7 +406,7 @@ void handle_advanced() {
   addFormNumericBox(F("Webserver port"), F("webport"), Settings.WebserverPort, 0, 65535);
   addFormNote(F("Requires reboot to activate"));
 
-  addFormNumericBox(F("Fixed IP Octet"), F("ip"),           Settings.IP_Octet,     0, 255);
+  // addFormNumericBox(F("Fixed IP Octet"), F("ip"),           Settings.IP_Octet_unused,     0, 255); // No longer applicable after 2026-Network rewrite-merged
 
   addFormNumericBox(F("WD I2C Address"), F("wdi2caddress"), Settings.WDI2CAddress, 0, 127);
   addHtml(F(" (decimal)"));
@@ -352,6 +452,9 @@ void handle_advanced() {
       #if FEATURE_MQTT_CONNECT_BACKGROUND
       ,LabelType::MQTT_CONNECT_IN_BACKGROUND
       #endif // if FEATURE_MQTT_CONNECT_BACKGROUND
+      #if FEATURE_MQTT_DISCOVER
+      ,LabelType::MQTT_DISCOVER_GROUP_INCL_TASKNAME
+      #endif // if FEATURE_MQTT_DISCOVER
       #if FEATURE_COLORIZE_CONSOLE_LOGS
       ,LabelType::COLORIZE_CONSOLE_LOGS
       #endif
@@ -421,99 +524,9 @@ void handle_advanced() {
   addHtml(F("<input type='hidden' name='edit' value='1'>"));
   html_end_table();
   html_end_form();
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
-}
-
-void addFormDstSelect(bool isStart, uint16_t choice) {
-  uint16_t tmpstart(choice);
-  uint16_t tmpend(choice);
-
-  if (!TimeChangeRule(choice, 0).isValid()) {
-    time_zone.getDefaultDst_flash_values(tmpstart, tmpend);
-  }
-  TimeChangeRule rule(isStart ? tmpstart : tmpend, 0);
-  {
-    const __FlashStringHelper *  week[] = { F("Last"), F("1st"), F("2nd"), F("3rd"), F("4th") };
-    constexpr int weekValues[] = { 0, 1, 2, 3, 4 };
-    addRowLabel(concat(
-      isStart ? F("Start")  : F("End"),
-      F(" (week, dow, month)")));
-
-    const FormSelectorOptions selector(NR_ELEMENTS(weekValues), week, weekValues);
-    selector.addSelector(
-      isStart ? F("dststartweek")  : F("dstendweek"), 
-      rule.week);
-  }
-  html_BR();
-  {
-    const __FlashStringHelper *  dow[] = { F("Sun"), F("Mon"), F("Tue"), F("Wed"), F("Thu"), F("Fri"), F("Sat") };
-    constexpr int dowValues[]  = { 1, 2, 3, 4, 5, 6, 7 };
-
-    const FormSelectorOptions selector(NR_ELEMENTS(dowValues), dow, dowValues);
-    selector.addSelector(
-      isStart ? F("dststartdow")   : F("dstenddow"),
-      rule.dow);
-  }
-  html_BR();
-  {
-    const __FlashStringHelper * month[] = { F("Jan"), F("Feb"), F("Mar"), F("Apr"), F("May"), F("Jun"), F("Jul"), F("Aug"), F("Sep"), F("Oct"), F("Nov"), F(
-                             "Dec") };
-    constexpr int monthValues[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
-
-    const FormSelectorOptions selector(NR_ELEMENTS(monthValues), month, monthValues);
-    selector.addSelector(
-      isStart ? F("dststartmonth") : F("dstendmonth"),
-      rule.month);
-  }
-
-  addFormNumericBox(
-    isStart ? F("Start (localtime, e.g. 2h&rarr;3h)")  : F("End (localtime, e.g. 3h&rarr;2h)"),
-    isStart ? F("dststarthour")  : F("dstendhour"),
-    rule.hour, 0, 23);
-  addUnit(isStart ? F("hour &#x21b7;") : F("hour &#x21b6;"));
-}
-
-void addFormExtTimeSourceSelect(const __FlashStringHelper * label, const __FlashStringHelper * id, ExtTimeSource_e choice)
-{
-  addRowLabel(label);
-  const __FlashStringHelper * options[] =
-    { F("None"), F("DS1307"), F("DS3231"), F("PCF8523"), F("PCF8563")};
-  constexpr int optionValues[] = { 
-    static_cast<int>(ExtTimeSource_e::None),
-    static_cast<int>(ExtTimeSource_e::DS1307),
-    static_cast<int>(ExtTimeSource_e::DS3231),
-    static_cast<int>(ExtTimeSource_e::PCF8523),
-    static_cast<int>(ExtTimeSource_e::PCF8563)
-    };
-
-  const FormSelectorOptions selector(NR_ELEMENTS(optionValues), options, optionValues);
-  selector.addSelector(id, static_cast<int>(choice));
+  sendTail_stdtemplate();
 }
 
 
-void addFormLogLevelSelect(LabelType::Enum label, int choice)
-{
-  #ifdef BUILD_NO_DEBUG
-  if (choice > LOG_LEVEL_INFO) choice = LOG_LEVEL_INFO;
-  #endif
-
-  addRowLabel(getLabel(label));
-  addLogLevelFormSelectorOptions(getInternalLabel(label), choice);
-}
-
-#if FEATURE_SYSLOG
-void addFormLogFacilitySelect(const __FlashStringHelper * label, const __FlashStringHelper * id, int choice)
-{
-  addRowLabel(label);
-  const __FlashStringHelper * options[] =
-  { F("Kernel"), F("User"),   F("Daemon"),   F("Message"), F("Local0"),  F("Local1"),
-    F("Local2"), F("Local3"), F("Local4"),   F("Local5"),  F("Local6"),  F("Local7") };
-  const int optionValues[] = { 0, 1, 3, 5, 16, 17, 18, 19, 20, 21, 22, 23 };
-
-  const FormSelectorOptions selector(NR_ELEMENTS(options), options, optionValues);
-  selector.addSelector(id, choice);
-}
-#endif
 
 #endif // ifdef WEBSERVER_ADVANCED

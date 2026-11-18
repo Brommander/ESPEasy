@@ -21,6 +21,133 @@
 # include <SD.h>
 #endif // if FEATURE_SD
 
+
+/*
+One 32-bit int       Arranged as     Arranged as     One 32-bit int
+                       4 bytes         4 bytes
+ 0A 0B 0C 0D          in memory       in memory       0A 0B 0C 0D
+  |  |  |  |                                           |  |  |  |
+  |  |  |  -------->    n: 0D           n: 0A  <--------  |  |  |
+  |  |  ----------->  n+1: 0C         n+1: 0B  <-----------  |  |
+  |  -------------->  n+2: 0B         n+2: 0C  <--------------  |
+  ----------------->  n+3: 0A         n+3: 0D  <-----------------
+    Little Endian                                 Big Endian
+
+Source: https://en.wikipedia.org/wiki/Endianness
+
+
+  Big Endian is the more common byte-order.
+  When used to program an ESPEasy plugin, 
+  it is most likely that device will use only one kind of byte-order.
+  It is more likely to be a programming error when both byte-orders 
+  are used for the same device.
+*/
+
+// Typical use case: data[i] << 24 | data[i + 1] << 16 | data[i + 2] << 8 | data[i + 3]
+uint32_t getUlFromBigEndianByteStream(const uint8_t* data, uint8_t nrBytes)
+{
+  uint32_t res{};
+  if (nrBytes > 4) nrBytes = 4;
+  for (uint8_t i = 0; i < nrBytes; ++i)
+  {
+    res <<= 8;
+    res |= data[i];
+  }
+  return res;
+}
+
+uint16_t getUint16FromBigEndianByteStream(const uint8_t* data)
+{
+  return (data[0] << 8) | data[1];
+}
+
+// Typical use case: data[i + 3] << 24 | data[i + 2] << 16 | data[i + 1] << 8 | data[i + 0]
+uint32_t getUlFromLittleEndianByteStream(const uint8_t* data, uint8_t nrBytes)
+{
+  uint32_t res{};
+  if (nrBytes > 4) nrBytes = 4;
+  while (nrBytes) {
+    --nrBytes;
+    res <<= 8;
+    res |= data[nrBytes];
+  }
+  return res;
+}
+
+uint16_t getUint16FromLittleEndianByteStream(const uint8_t* data)
+{
+  return (data[1] << 8) | data[0];
+}
+
+int32_t  fromTwosComplement(uint32_t twoComplementValue, uint8_t nrBits)
+{
+  if (nrBits <= 1) return 0;
+  if (nrBits >= 32) nrBits = 32;
+
+  const uint32_t max_signed = std::numeric_limits<int32_t>::max() >> (32 - nrBits);
+  if (twoComplementValue <= max_signed) return twoComplementValue;
+  // Using 64-bit int here to prevent overflows
+  int64_t res = twoComplementValue;
+  res -= (1 << nrBits);
+  return res;
+}
+
+uint32_t toTwosComplement(int32_t value, uint8_t nrBits)
+{
+  if (nrBits == 0) return 0;
+  if (nrBits >= 32) return static_cast<uint32_t>(value);
+
+  // Safely generate a mask for nrBits < 32
+  const uint32_t mask = (1ul << nrBits) - 1;
+  
+  // Casting to unsigned handles negative values automatically
+  return static_cast<uint32_t>(value) & mask;
+/*
+  if (value >= 0) return value;
+  if (nrBits <= 1) return 0;
+  if (nrBits >= 32) nrBits = 32;
+
+  // See: https://www.geeksforgeeks.org/digital-logic/twos-complement/
+  uint32_t res = ~(uint32_t)value;
+  ++res;
+  if (nrBits < 32) {
+    // Apply bitmask to only keep the nrBits.
+    res &= ((1ul << nrBits) - 1);
+  }
+  // TODO TD-er: Not sure if this will work for < 32 bits. Maybe just 2^nrBits to 64-bit int?
+  //  int64_t res = value;
+  //  res += (1 << nrBits);
+  return res;
+*/
+}
+
+uint16_t swapLEbyteOrder16(uint16_t value) {
+  return __builtin_bswap16(value); // GCC internal
+  // return ((value & 0xFF) << 8) | ((value & 0xFF00) >> 8);
+}
+
+uint32_t swapLEbyteOrder(uint32_t value, uint8_t bits) {
+  switch (bits) {
+    case 16:
+      return __builtin_bswap16(static_cast<uint16_t>(value)); // GCC internal
+      // return ((value & 0xFF) << 8) | ((value & 0xFF00) >> 8);
+    case 24:
+      return __builtin_bswap32(value & 0x00FFFFFF) >> 8; // GCC internal
+      // return ((value & 0xFF0000) >> 16) | (value & 0xFF00) | ((value & 0xFF) << 16);
+    case 32:
+      return __builtin_bswap32(value); // GCC internal
+      // return ((value & 0xFF000000) >> 24) | ((value & 0xFF0000) >> 16) | ((value & 0xFF00) << 8) | ((value & 0xFF) << 24);
+  }
+  return value;
+}
+
+uint64_t swapLEbyteOrder64(uint64_t value) {
+  return __builtin_bswap64(value); // GCC internal
+  // value = ((value << 8) & 0xFF00FF00FF00FF00ull) | ((value >> 8) & 0x00FF00FF00FF00FFull);
+  // value = ((value << 16) & 0xFFFF0000FFFF0000ull) | ((value >> 16) & 0x0000FFFF0000FFFFull);
+  // return (value << 32) | (value >> 32);
+}
+
 bool remoteConfig(struct EventStruct *event, const String& string)
 {
   // FIXME TD-er: Why have an event here as argument? It is not used.
@@ -61,9 +188,9 @@ bool remoteConfig(struct EventStruct *event, const String& string)
 /********************************************************************************************\
    delay in milliseconds with background processing
  \*********************************************************************************************/
-void delayBackground(unsigned long dsdelay)
+void delayBackground(uint32_t dsdelay)
 {
-  unsigned long timer = millis() + dsdelay;
+  uint32_t timer = millis() + dsdelay;
 
   while (!timeOutReached(timer)) {
     backgroundtasks();
@@ -145,6 +272,17 @@ bool setControllerEnableStatus(controllerIndex_t controllerIndex, bool enabled)
 /********************************************************************************************\
    Toggle task enabled state
  \*********************************************************************************************/
+bool setTaskEnableStatus(taskIndex_t taskIndex,
+                         bool        enabled)
+{
+  if (Settings.TaskDeviceEnabled[taskIndex] != enabled) {
+    struct EventStruct TempEvent(taskIndex);
+    return setTaskEnableStatus(&TempEvent, enabled);
+  }
+  return true;
+}
+
+
 bool setTaskEnableStatus(struct EventStruct *event, bool enabled)
 {
   if (!validTaskIndex(event->TaskIndex)) { return false; }
@@ -192,11 +330,8 @@ void taskClear(taskIndex_t taskIndex, bool save)
   checkRAM(F("taskClear"));
   #endif // ifndef BUILD_NO_RAM_TRACKER
 
-  if (Settings.TaskDeviceEnabled[taskIndex]) {
-    struct EventStruct TempEvent(taskIndex);
-    String dummy;
-    PluginCall(PLUGIN_EXIT, &TempEvent, dummy);
-  }
+  setTaskEnableStatus(taskIndex, false);
+
   Settings.clearTask(taskIndex);
   clearTaskCache(taskIndex); // Invalidate any cached values.
   ExtraTaskSettings.clear();
@@ -615,7 +750,7 @@ void logMemUsageAfter(const __FlashStringHelper *function, int value) {
   // The recorded used memory is not an exact value, as background (or interrupt) tasks may also allocate or free heap memory.
   static int last_freemem = ESP.getFreeHeap();
   const int  freemem_end  = ESP.getFreeHeap();
-
+#ifndef BUILD_NO_DEBUG
   if (loglevelActiveFor(LOG_LEVEL_DEBUG)) {
     String log;
 
@@ -627,18 +762,17 @@ void logMemUsageAfter(const __FlashStringHelper *function, int value) {
         log += value;
       }
 
-      while (log.length() < 30) { log += ' ';
-      }
+      padToMinimumLength(log, 30);
       log += F("Free mem after: ");
       log += freemem_end;
 
-      while (log.length() < 55) { log += ' ';
-      }
+      padToMinimumLength(log, 55);
       log += F("diff: ");
       log += last_freemem - freemem_end;
       addLogMove(LOG_LEVEL_DEBUG, log);
     }
   }
+#endif
 
   last_freemem = freemem_end;
 }

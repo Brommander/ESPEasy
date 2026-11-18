@@ -50,10 +50,7 @@ bool P014_data_struct::finalizeInit(uint8_t i2caddr, uint8_t resolution)
     addLogMove(LOG_LEVEL_INFO, strformat(F("P014: chip_id=%d"), chip_id));
   }
   if (chip_id == CHIP_ID_SI7013){
-    if (!I2C_write8_reg(i2caddr,SI7013_WRITE_REG2, SI7013_REG2_DEFAULT )){
-      return false;
-    }
-    if (!enablePowerForADC(i2caddr)){
+    if (!I2C_write8_reg(i2caddr,SI7013_WRITE_REG2, SI7013_REG2_DEFAULT ) || !enablePowerForADC(i2caddr)){
       return false;
     }
   }
@@ -519,7 +516,7 @@ bool P014_data_struct::readHumidity(uint8_t i2caddr, uint8_t resolution)
 
     // Convert raw value to Humidity percent
     // pm-cz: it is possible to enable decimal places for humidity as well by multiplying the value in formula by 100
-    int data = ((1250 * (long)raw) >> 16) - 60;
+    int data = ((1250 * (int32_t)raw) >> 16) - 60;
 
     // Datasheet says doing this check
     if (data>1000) data = 1000;
@@ -574,7 +571,7 @@ bool P014_data_struct::readTemperatureFromHumidity(uint8_t i2caddr, uint8_t reso
 int16_t P014_data_struct::convertRawTemperature(uint16_t raw, uint8_t resolution){
   // Convert raw value to Temperature (*100)
   // for 23.45C value will be 2345
-  int16_t data =  ((17572 * (long)raw) >> 16) - 4685;
+  int16_t data =  ((17572 * (int32_t)raw) >> 16) - 4685;
 
   // pm-cz: We should probably check for precision here as well
   if (resolution != SI70xx_RESOLUTION_14T_12RH) {

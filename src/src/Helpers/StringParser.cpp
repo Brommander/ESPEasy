@@ -24,7 +24,12 @@
 #include "../Helpers/StringConverter.h"
 #include "../Helpers/StringGenerator_GPIO.h"
 
-
+#if FEATURE_EEPROM_EXTERNAL
+#include "../../ESPEasy/eeprom/Helpers/EEPROMExternal.h"
+#endif // if FEATURE_EEPROM_EXTERNAL
+#if FEATURE_RTC_SRAM_STORAGE
+#include "../../ESPEasy/eeprom/Helpers/RTCSRAMStorage.h"
+#endif // if FEATURE_RTC_SRAM_STORAGE
 
 /********************************************************************************************\
    Parse string template
@@ -37,12 +42,31 @@ bool hasEscapedCharacter(String& str, const char EscapeChar)
 
 void stripEscapeCharacters(String& str)
 {
-  const char braces[]     = { '%', '[', ']', '{', '}', '(', ')' };
+  const char braces[] = { '%', '[', ']', '{', '}', '(', ')'
+    #if FEATURE_EXTENDED_STRING_FUNCTIONS
+    , ':'
+    #endif // if FEATURE_EXTENDED_STRING_FUNCTIONS
+   };
   constexpr uint8_t nrbraces = NR_ELEMENTS(braces);
 
   for (uint8_t i = 0; i < nrbraces; ++i) {
     const String s(concat(F("\\"), braces[i]));
     str.replace(s, s.substring(1));
+  }
+}
+
+void addEscapeCharacters(String& str)
+{
+  const char braces[] = { '%', '[', ']', '{', '}', '(', ')'
+    #if FEATURE_EXTENDED_STRING_FUNCTIONS
+    , ':'
+    #endif // if FEATURE_EXTENDED_STRING_FUNCTIONS
+   };
+  constexpr uint8_t nrbraces = NR_ELEMENTS(braces);
+
+  for (uint8_t i = 0; i < nrbraces; ++i) {
+    const String s(concat(F("\\"), braces[i]));
+    str.replace(s.substring(1), s);
   }
 }
 
@@ -167,10 +191,22 @@ String parseTemplate_padded(String& tmpString, uint8_t minimal_lineSize, bool us
       const bool devNameEqStr    = equals(deviceName, F("str"));
       const bool devNameEqLength = equals(deviceName, F("length"));
       #endif // if FEATURE_STRING_VARIABLES
+      #if FEATURE_EEPROM_EXTERNAL
+      const bool devNameEqReadEE = equals(deviceName, F("readee"));
+      #endif // if FEATURE_EEPROM_EXTERNAL
+      #if FEATURE_RTC_SRAM_STORAGE
+      const bool devNameEqReadRTC = equals(deviceName, F("readrtc"));
+      #endif // if FEATURE_RTC_SRAM_STORAGE
       if (devNameEqInt || equals(deviceName, F("var"))
          #if FEATURE_STRING_VARIABLES
          || devNameEqStr || devNameEqLength
          #endif // if FEATURE_STRING_VARIABLES
+         #if FEATURE_EEPROM_EXTERNAL
+         || devNameEqReadEE
+         #endif // if FEATURE_EEPROM_EXTERNAL
+         #if FEATURE_RTC_SRAM_STORAGE
+         || devNameEqReadRTC
+         #endif // if FEATURE_RTC_SRAM_STORAGE
          )
       {
         // Address an internal variable either as float or as int
@@ -198,6 +234,54 @@ String parseTemplate_padded(String& tmpString, uint8_t minimal_lineSize, bool us
               tmpString);
          } else
          #endif
+         #if FEATURE_EEPROM_EXTERNAL
+         if (devNameEqReadEE) {
+           uint32_t slot{};
+           String value;
+           if (validUIntFromString(valueName, slot)) {
+             #if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+             value = doubleToString(ESPEasy::eeprom::readEEPROMSlot(slot));
+             #else // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+             value = toString(ESPEasy::eeprom::readEEPROMSlot(slot));
+             #endif // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+           } else if (valueName.equalsIgnoreCase(F("max"))) {
+             value = ESPEasy::eeprom::getEEPROMMaxSlots();
+           } else if (valueName.equalsIgnoreCase(F("wp"))) {
+             value = ESPEasy::eeprom::isEEPROMExternalWriteProtected() ? 1 : 0;
+           }
+           if (!value.isEmpty()) {
+             transformValue(
+                 newString, 
+                 minimal_lineSize, 
+                 std::move(value), 
+                 format, 
+                 tmpString);
+           }
+         } else
+         #endif // if FEATURE_EEPROM_EXTERNAL
+         #if FEATURE_RTC_SRAM_STORAGE
+         if (devNameEqReadRTC) {
+           uint32_t slot{};
+           String value;
+           if (validUIntFromString(valueName, slot)) {
+             #if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+             value = doubleToString(ESPEasy::eeprom::readRTCSRAMSlot(slot));
+             #else // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+             value = toString(ESPEasy::eeprom::readRTCSRAMSlot(slot));
+             #endif // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
+           } else if (valueName.equalsIgnoreCase(F("max"))) {
+             value = ESPEasy::eeprom::getRTCSRAMMaxSlots();
+           }
+           if (!value.isEmpty()) {
+             transformValue(
+                 newString, 
+                 minimal_lineSize, 
+                 std::move(value), 
+                 format, 
+                 tmpString);
+           }
+         } else
+         #endif // if FEATURE_RTC_SRAM_STORAGE
          {
           const ESPEASY_RULES_FLOAT_TYPE floatvalue = getCustomFloatVar(valueName);
           unsigned char nr_decimals = maxNrDecimals_fpType(floatvalue);
@@ -287,25 +371,26 @@ String parseTemplate_padded(String& tmpString, uint8_t minimal_lineSize, bool us
               }
             }
           }
+          const bool forController = valueName.indexOf(F(".controller")) == 8;
           if (!isHandled && valueName.startsWith(F("settings."))) {  // Task settings values
             String value;
-            if (valueName.endsWith(F(".enabled"))) {           // Task state
+            if (!forController && valueName.endsWith(F(".enabled"))) { // Task state
               value = Settings.TaskDeviceEnabled[taskIndex] ? '1' : '0';
             } else if (valueName.endsWith(F(".interval"))) {   // Task interval
               value = Settings.TaskDeviceTimer[taskIndex];
             } else if (valueName.endsWith(F(".valuecount"))) { // Task value count
               value = getValueCountForTask(taskIndex);
-            } else if ((valueName.indexOf(F(".controller")) == 8) && valueName.length() >= 20) { // Task controller values
-              String ctrl = valueName.substring(19, 20);
+            } else if (forController && valueName.length() >= 20) { // Task controller values
+              const String ctrl = valueName.substring(19, 20);
               int32_t ctrlNr = 0;
-              if (validIntFromString(ctrl, ctrlNr) && (ctrlNr >= 1) && (ctrlNr <= CONTROLLER_MAX) && 
-                  Settings.ControllerEnabled[ctrlNr - 1]) { // Controller nr. valid and enabled
+              if (validIntFromString(ctrl, ctrlNr) && (ctrlNr >= 1) && (ctrlNr <= CONTROLLER_MAX)) {
+                const bool ctrlEnabled = Settings.ControllerEnabled[ctrlNr - 1]; // Controller nr. valid and enabled
                 if (valueName.endsWith(F(".enabled"))) {    // Task-controller enabled
-                  value = Settings.TaskDeviceSendData[ctrlNr - 1][taskIndex];
-                } else if (valueName.endsWith(F(".idx"))) { // Task-controller idx value
+                  value = ctrlEnabled ? Settings.TaskDeviceSendData[ctrlNr - 1][taskIndex] : 0;
+                } else if (ctrlEnabled && valueName.endsWith(F(".idx"))) { // Task-controller idx value
                   protocolIndex_t ProtocolIndex = getProtocolIndex_from_ControllerIndex(ctrlNr - 1);
 
-                  if (validProtocolIndex(ProtocolIndex) && 
+                  if (validProtocolIndex(ProtocolIndex) &&
                       getProtocolStruct(ProtocolIndex).usesID && (Settings.Protocol[ctrlNr - 1] != 0)) {
                     value = Settings.TaskDeviceID[ctrlNr - 1][taskIndex];
                   }
@@ -438,9 +523,7 @@ String parseTemplate_padded(String& tmpString, uint8_t minimal_lineSize, bool us
   parse_string_commands(newString);
 
   // padding spaces
-  while (newString.length() < minimal_lineSize) {
-    newString += ' ';
-  }
+  padToMinimumLength(newString, minimal_lineSize);
 
   STOP_TIMER(PARSE_TEMPLATE_PADDED);
   #ifndef BUILD_NO_RAM_TRACKER
@@ -716,6 +799,7 @@ void transformValue(
 
               if (valueJustLength > 1)
               {
+                // TODO TD-er: Check if we can use prefixToMinimumLength here
                 if (isDigit(valueJust[1]))                          // Check Pn where n is between 0 and 9
                 {
                   int filler = valueJust[1] - value.length() - '0'; // char '0' = 48; char '9' = 58
@@ -730,6 +814,7 @@ void transformValue(
 
               if (valueJustLength > 1)
               {
+                // TODO TD-er: Check if we can use padToMinimumLength here
                 if (isDigit(valueJust[1]))                          // Check Sn where n is between 0 and 9
                 {
                   int filler = valueJust[1] - value.length() - '0'; // 48
@@ -804,6 +889,7 @@ void transformValue(
 
       if (rightJustify)
       {
+        // TODO TD-er: Check if we can use prefixToMinimumLength here
         int filler = lineSize - newString.length() - value.length() - tmpString.length();
 
         for (uint8_t f = 0; f < filler; f++) {
@@ -848,6 +934,7 @@ void transformValue(
 // Return INVALID_TASK_INDEX when not found, else return taskIndex
 taskIndex_t findTaskIndexByName(String deviceName, bool allowDisabled)
 {
+  deviceName.trim();
   deviceName.toLowerCase();
   // cache this, since LoadTaskSettings does take some time.
   auto result = Cache.taskIndexName.find(deviceName);
@@ -1021,7 +1108,18 @@ void parseCommandString(struct EventStruct *event, const String& string)
   checkRAM(F("parseCommandString"));
   #endif // ifndef BUILD_NO_RAM_TRACKER
 
-  for (uint8_t i = 0; i < 5; ++i) {
-    event->ParN[i] = parseCommandArgumentInt(string, i + 1);
+  CommandArgParser args;
+  args.readCommand(string);
+
+#ifndef BUILD_NO_DEBUG
+  args.debug(F("parseCommandString"), LOG_LEVEL_DEBUG);
+#endif // ifndef BUILD_NO_DEBUG
+
+
+  constexpr uint8_t nrInts = NR_ELEMENTS(event->ParN);
+
+  for (uint8_t i = 0; i < nrInts; ++i) {
+    event->ParN[i] = args.getArgInt(i);
+//    parseCommandArgumentInt(string, i + 1);
   }
 }

@@ -147,6 +147,7 @@ bool P153_data_struct::plugin_read(struct EventStruct *event)           {
 
       // Data valid?
       if (calc_CRC8(data[0], data[1], data[2]) && calc_CRC8(data[3], data[4], data[5])) {
+        // TODO TD-er: Use getUint16FromBigEndianByteStream
         const float temp = static_cast<float>(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
         const float hum  = static_cast<float>(((uint16_t)data[3] << 8) | (uint16_t)data[4]);
         temperature = -45.0f + 175.0f * temp / 65535.0f;
@@ -170,6 +171,7 @@ bool P153_data_struct::plugin_read(struct EventStruct *event)           {
           }
         }
 
+        #ifndef BUILD_NO_DEBUG
         if (loglevelActiveFor(LOG_LEVEL_INFO)) {
           const String taskName = getTaskDeviceName(event->TaskIndex);
           addLogMove(LOG_LEVEL_INFO, strformat(F("%s: Temperature: %s"),
@@ -180,6 +182,7 @@ bool P153_data_struct::plugin_read(struct EventStruct *event)           {
                                                taskName.c_str(),
                                                formatUserVarNoCheck(event, 1).c_str()));
         }
+        #endif // ifndef BUILD_NO_DEBUG
       } else {
         UserVar.setFloat(event->TaskIndex, 0, NAN);
         UserVar.setFloat(event->TaskIndex, 1, NAN);

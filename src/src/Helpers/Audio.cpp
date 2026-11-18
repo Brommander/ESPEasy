@@ -11,7 +11,7 @@
 /********************************************************************************************\
    Generate a tone of specified frequency on pin
  \*********************************************************************************************/
-bool tone_espEasy(int8_t _pin, unsigned int frequency, unsigned long duration) {
+bool tone_espEasy(int8_t _pin, unsigned int frequency, uint32_t duration) {
   if (!validGpio(_pin)) { return false; }
 
   // Duty cycle can be used as some kind of volume.
@@ -39,11 +39,13 @@ static bool rtttlPlaying = false;
 #  if FEATURE_ANYRTTTL_ASYNC
 static String rtttlMelody;
 
-void clear_rtttl_melody() {
+static void clear_rtttl_melody() {
   // The non-blocking play will read from a char pointer.
   // So we must stop the playing before changing the string as it could otherwise lead to a crash.
   if (anyrtttl::nonblocking::isPlaying()) { // If currently playing, cancel that
+    #ifndef BUILD_NO_DEBUG
     addLog(LOG_LEVEL_INFO, F("RTTTL: Cancelling running song..."));
+    #endif // ifndef BUILD_NO_DEBUG
     anyrtttl::nonblocking::stop();
     #   if FEATURE_RTTTL_EVENTS
 

@@ -9,9 +9,9 @@
 #  include "../Helpers/StringGenerator_System.h"
 # endif // if FEATURE_MQTT_DISCOVER
 # include "../Helpers/SystemVariables.h"
-#if FEATURE_TASKVALUE_UNIT_OF_MEASURE
-# include "../Helpers/ESPEasy_UnitOfMeasure.h"
-#endif
+# if FEATURE_TASKVALUE_UNIT_OF_MEASURE
+#  include "../Helpers/ESPEasy_UnitOfMeasure.h"
+# endif
 
 # ifdef USES_P001
 #  include "../PluginStructs/P001_data_struct.h"
@@ -372,45 +372,27 @@ bool getDiscoveryVType(struct EventStruct *event, QueryVType_ptr func_ptr, uint8
 }
 
 // helper functions to supply a single value VType to be used by getDiscoveryVType
-int Plugin_QueryVType_BinarySensor(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_SWITCH) | Sensor_VType_CAN_SET;
-}
+int Plugin_QueryVType_BinarySensor(uint8_t value_nr)    { return static_cast<int>(Sensor_VType::SENSOR_TYPE_SWITCH) | Sensor_VType_CAN_SET; }
 
 int Plugin_QueryVType_BinarySensorInv(uint8_t value_nr) {
   return static_cast<int>(Sensor_VType::SENSOR_TYPE_SWITCH_INVERTED) | Sensor_VType_CAN_SET;
 }
 
-int Plugin_QueryVType_Analog(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_ANALOG_ONLY);
-}
+int           Plugin_QueryVType_Analog(uint8_t value_nr)         { return static_cast<int>(Sensor_VType::SENSOR_TYPE_ANALOG_ONLY); }
 
-int Plugin_QueryVType_CO2(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_CO2_ONLY);
-}
+int           Plugin_QueryVType_CO2(uint8_t value_nr)            { return static_cast<int>(Sensor_VType::SENSOR_TYPE_CO2_ONLY); }
 
-int Plugin_QueryVType_Distance(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_DISTANCE_ONLY);
-}
+int           Plugin_QueryVType_Distance(uint8_t value_nr)       { return static_cast<int>(Sensor_VType::SENSOR_TYPE_DISTANCE_ONLY); }
 
-int Plugin_QueryVType_DustPM2_5(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_DUSTPM2_5_ONLY);
-}
+int           Plugin_QueryVType_DustPM2_5(uint8_t value_nr)      { return static_cast<int>(Sensor_VType::SENSOR_TYPE_DUSTPM2_5_ONLY); }
 
-int Plugin_QueryVType_Lux(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_LUX_ONLY);
-}
+int           Plugin_QueryVType_Lux(uint8_t value_nr)            { return static_cast<int>(Sensor_VType::SENSOR_TYPE_LUX_ONLY); }
 
-int Plugin_QueryVType_Temperature(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_TEMP_ONLY);
-}
+int           Plugin_QueryVType_Temperature(uint8_t value_nr)    { return static_cast<int>(Sensor_VType::SENSOR_TYPE_TEMP_ONLY); }
 
-int Plugin_QueryVType_Weight(uint8_t value_nr) {
-  return static_cast<int>(Sensor_VType::SENSOR_TYPE_WEIGHT_ONLY);
-}
+int           Plugin_QueryVType_Weight(uint8_t value_nr)         { return static_cast<int>(Sensor_VType::SENSOR_TYPE_WEIGHT_ONLY); }
 
-String makeHomeAssistantCompliantName(const String& name) {
-  return ESPEasy::net::makeRFCCompliantName(name, '_', '_', 0);
-}
+static String makeHomeAssistantCompliantName(const String& name) { return ESPEasy::net::makeRFCCompliantName(name, '_', '_', 0); }
 
 #  if FEATURE_MQTT_DEVICECLASS
 const char mqtt_binary_deviceclass_names[] PROGMEM =
@@ -430,22 +412,23 @@ String MQTT_binary_deviceClassName(int devClassIndex) {
   return result;
 }
 
-int MQTT_binary_deviceClassIndex(const String& deviceClassName) {
+static int MQTT_binary_deviceClassIndex(const String& deviceClassName) {
   return GetCommandCode(deviceClassName.c_str(), mqtt_binary_deviceclass_names);
 }
 
 // TwoWay devices are marked with ² in the selector, and discovered as 'light' instead of 'binary_sensor'
 bool MQTT_binary_deviceClassTwoWay(int devClassIndex) {
-  switch (devClassIndex) { // Index into mqtt_binary_deviceclass_names
-    case 1:                // power
-    case 2:                // light
-    case 3:                // plug
-    case 5:                // garage_door
-    case 8:                // lock
-    case 26:               // sound
-    case 28:               // vibration
-    case 29:               // switch
-    case 30:               // outlet
+  switch (devClassIndex) // Index into mqtt_binary_deviceclass_names
+  {
+    case 1:              // power
+    case 2:              // light
+    case 3:              // plug
+    case 5:              // garage_door
+    case 8:              // lock
+    case 26:             // sound
+    case 28:             // vibration
+    case 29:             // switch
+    case 30:             // outlet
       return true;
     default:
       break;
@@ -455,9 +438,10 @@ bool MQTT_binary_deviceClassTwoWay(int devClassIndex) {
 
 // Switch devices are marked with ÷ in the selector, and discovered as 'switch' instead of 'light'
 bool MQTT_binary_deviceClassSwitch(int devClassIndex) {
-  switch (devClassIndex) { // Index into mqtt_binary_deviceclass_names
-    case 29:               // switch
-    case 30:               // outlet
+  switch (devClassIndex) // Index into mqtt_binary_deviceclass_names
+  {
+    case 29:             // switch
+    case 30:             // outlet
       return true;
     default:
       break;
@@ -468,9 +452,11 @@ bool MQTT_binary_deviceClassSwitch(int devClassIndex) {
 #  endif // if FEATURE_MQTT_DEVICECLASS
 
 #  if FEATURE_MQTT_STATE_CLASS
+
 const __FlashStringHelper* MQTT_sensor_StateClass(uint8_t index,
                                                   bool    display) {
-  switch (index) {
+  switch (index)
+  {
     case 0: return F("");
     case 1: return display ? F("Measurement") : F("measurement");
     case 2: return display ? F("Measurement-angle") : F("measurement_angle");
@@ -482,48 +468,234 @@ const __FlashStringHelper* MQTT_sensor_StateClass(uint8_t index,
 
 #  endif // if FEATURE_MQTT_STATE_CLASS
 
-bool MQTT_SendAutoDiscovery(controllerIndex_t ControllerIndex, cpluginID_t CPluginID) {
-  bool success = true;
+static String MQTT_DiscoveryBuildValueTopic(const String            & topic,
+                                            struct EventStruct       *event,
+                                            uint8_t                   taskValueIndex,
+                                            const __FlashStringHelper*deviceClass,
+                                            const String            & uniqueId,
+                                            const String            & elementId,
+                                            const String            & valueName) {
+  String tmpTopic(topic);
 
-  MakeControllerSettings(ControllerSettings); // -V522
+  #  if FEATURE_STRING_VARIABLES
 
-  if (!AllocatedControllerSettings()) {
-    return false;
+  if (taskValueIndex >= VARS_PER_TASK) {
+    parseValNameVariable(tmpTopic, valueName, false);
+  } else
+  #  endif // if FEATURE_STRING_VARIABLES
+  {
+    parseSingleControllerVariable(tmpTopic, event, taskValueIndex, false);
   }
-  LoadControllerSettings(ControllerIndex, *ControllerSettings);
+  parseDeviceClassVariable(tmpTopic, deviceClass, false);
+  parseUniqueIdVariable(tmpTopic, uniqueId, false);
+  parseElementIdVariable(tmpTopic, elementId, false);
+  parseControllerVariables(tmpTopic, event, false); // Replace this last
 
-  if (ControllerSettings->mqtt_autoDiscovery()
-
-      // && (ControllerSettings->MqttAutoDiscoveryTrigger[0] != 0)
-      && (ControllerSettings->MqttAutoDiscoveryTopic[0] != 0)) {
-    #  ifndef BUILD_NO_DEBUG
-
-    if (loglevelActiveFor(LOG_LEVEL_INFO)) {
-      addLog(LOG_LEVEL_INFO, concat(strformat(F("MQTT : AutoDiscovery for Controller %d CPlugin %d"),
-                                              ControllerIndex + 1, CPluginID),
-                                    validTaskIndex(mqttDiscoverOnlyTask) ?
-                                    strformat(F(", Task %d"), mqttDiscoverOnlyTask + 1) :
-                                    EMPTY_STRING));
-    }
-    #  endif // ifndef BUILD_NO_DEBUG
-
-
-    // Dispatch autoDiscovery per supported CPlugin
-    switch (CPluginID) {
-      case 5: // CPLUGIN_ID_005 : Home assistant/openHAB
-        success = MQTT_HomeAssistant_SendAutoDiscovery(ControllerIndex, *ControllerSettings);
-        break;
-    }
+  while (tmpTopic.endsWith(F("/"))) {
+    tmpTopic = tmpTopic.substring(0, tmpTopic.length() - 1);
   }
 
+  return tmpTopic;
+}
+
+static String MQTT_TaskValueUniqueName(const String& taskName,
+                                       const String& valueName) {
+  String uniqueId = strformat(F("%s_%s_%s"),
+                              makeHomeAssistantCompliantName(Settings.getHostname()).c_str(),
+                              taskName.c_str(),
+                              valueName.c_str());
+
+  uniqueId.toLowerCase();
+  return uniqueId;
+}
+
+static bool MQTT_DiscoveryPublish(controllerIndex_t ControllerIndex,
+                                  const String    & topic,
+                                  const String    & discoveryMessage,
+                                  taskIndex_t       x,
+                                  uint8_t           v,
+                                  bool              retainDsc) {
+  bool result = false;
+
+  // Send each discovery message separate
+  result = MQTTpublish(ControllerIndex, INVALID_TASK_INDEX, topic.c_str(), discoveryMessage.c_str(), retainDsc);
+  #  ifndef BUILD_NO_DEBUG
+
+  if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+    addLog(LOG_LEVEL_INFO, strformat(F("MQTT : Discovery %d Task %d '%s': disc.topic: %s"),
+                                     result, x + 1, getTaskDeviceName(x).c_str(), topic.c_str()));
+    addLog(LOG_LEVEL_INFO, strformat(F("MQTT : Discovery payload: %s"),
+                                     discoveryMessage.c_str()));
+  }
+  #  endif // ifndef BUILD_NO_DEBUG
+  return result;
+}
+
+static bool MQTT_DiscoveryPublishWithStatusAndSet(
+  uint8_t                   taskValue,
+  const String            & valueName,
+  controllerIndex_t         ControllerIndex,
+  ControllerSettingsStruct& ControllerSettings,
+  const __FlashStringHelper*componentClass,
+  const String            & deviceClass,
+  const String            & unitOfMeasure,
+  struct EventStruct       *event,
+  const String            & deviceElement,
+  const String            & stateClass,
+  bool                      success,
+  bool                      hasSet,
+  bool                      hasIcon,
+  const String            & elementName,
+  const String            & elementId,
+  bool                      sendTrigger) 
+{
+  if (!valueName.isEmpty()) {
+    const String taskName = makeHomeAssistantCompliantName(getTaskDeviceName(event->TaskIndex));
+    const String valName  = makeHomeAssistantCompliantName(valueName);
+
+    const String uniqueId = elementName.isEmpty() ? MQTT_TaskValueUniqueName(taskName, valName)
+                                                  : Settings.MQTTDiscoverGroupInclTaskname()
+                                                  ? strformat(F("%s_%s_%s"), elementId.c_str(), taskName.c_str(), valName.c_str())
+                                                  : strformat(F("%s_%s"), elementId.c_str(), valName.c_str());
+    String message;
+    {
+      const String publish = MQTT_DiscoveryBuildValueTopic(ControllerSettings.Publish,
+                                                           event,
+                                                           taskValue,
+                                                           componentClass,
+                                                           uniqueId,
+                                                           elementId,
+                                                           valName);
+
+      if (sendTrigger) {
+        // triggerMessage
+        message = strformat(F("{\"atype\":\"trigger\",\"t\":\"%s\","
+                              "\"p\":\"device_automation\","
+                              "\"type\":\"button_short_press\"," // FIXME ?
+                              "\"stype\":\"switch_1\""           // FIXME ?
+                              "%s}"),                            // deviceElement is used to pass in the TriggerState
+                            publish.c_str(), deviceElement.c_str());
+      } else {
+        // discoveryMessage
+        const String withSet   = hasSet ? F(",\"cmd_t\":\"~/set\"") : EMPTY_STRING;
+        const String schema    = hasSet ? EMPTY_STRING : "\"schema\":\"basic\",";
+        const String devOrIcon = hasIcon ? F("ic") : F("dev_cla");
+        const String withUoM   = unitOfMeasure.isEmpty() ? EMPTY_STRING :
+                                 strformat(F(",\"unit_of_meas\":\"%s\""), unitOfMeasure.c_str());
+        const String stateJson = stateClass.isEmpty() ? EMPTY_STRING :
+                                 strformat(F(",\"stat_cla\":\"%s\""),     stateClass.c_str());
+
+        message = strformat(F("{\"~\":\"%s\",\"name\":\"%s %s\",\"uniq_id\":\"%s\",%s"
+                              "\"%s\":\"%s\"%s%s%s,\"stat_t\":\"~\""
+                              "%s}"), // deviceElement last
+                            publish.c_str(), taskName.c_str(), valName.c_str(), uniqueId.c_str(), schema.c_str(),
+                            devOrIcon.c_str(), deviceClass.c_str(), withUoM.c_str(), stateJson.c_str(), withSet.c_str(),
+                            deviceElement.c_str());
+      }
+    }
+
+    const bool retainDsc = ControllerSettings.mqtt_retainDiscovery();
+    String     topic;
+    {
+      const String discoveryUrl = MQTT_DiscoveryBuildValueTopic(ControllerSettings.MqttAutoDiscoveryTopic,
+                                                                event,
+                                                                taskValue,
+                                                                componentClass,
+                                                                uniqueId,
+                                                                elementId,
+                                                                valName);
+      const String discoveryConfig(parseStringKeepCase(ControllerSettings.MqttAutoDiscoveryConfig, 1, '|'));
+      topic = discoveryConfig.isEmpty()
+        ? concat(discoveryUrl, F("/config"))
+        : concat(discoveryUrl, discoveryConfig);
+    }
+
+    return MQTT_DiscoveryPublish(ControllerIndex,
+                                 topic,
+                                 message,
+                                 event->TaskIndex,
+                                 taskValue,
+                                 retainDsc);
+  }
   return success;
+}
+
+static bool MQTT_DiscoveryPublishWithStatusAndSet(
+  uint8_t                   taskValue,
+  const String            & valueName,
+  controllerIndex_t         ControllerIndex,
+  ControllerSettingsStruct& ControllerSettings,
+  const __FlashStringHelper*componentClass,
+  const String            & deviceClass,
+  const String            & unitOfMeasure,
+  struct EventStruct       *event,
+  const String            & deviceElement,
+  const String            & stateClass,
+  bool                      success,
+  bool                      hasSet,
+  bool                      hasIcon,
+  const String            & elementName,
+  const String            & elementId)
+{
+  return MQTT_DiscoveryPublishWithStatusAndSet(
+    taskValue,
+    valueName,
+    ControllerIndex,
+    ControllerSettings,
+    componentClass,
+    deviceClass,
+    unitOfMeasure,
+    event,
+    deviceElement,
+    stateClass,
+    success,
+    hasSet,
+    hasIcon,
+    elementName,
+    elementId,
+    false);
+}
+
+static String MQTT_DiscoveryHelperGetValueName(taskIndex_t   taskIndex,
+                                               uint8_t       taskVarIndex,
+                                               DiscoveryItem discoveryItem) {
+  return
+    #  if FEATURE_STRING_VARIABLES
+    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.varName :
+    #  endif // if FEATURE_STRING_VARIABLES
+    getTaskValueName(taskIndex, taskVarIndex);
+}
+
+static String MQTT_DiscoveryHelperGetValueUoM(taskIndex_t   taskIndex,
+                                              uint8_t       taskVarIndex,
+                                              DiscoveryItem discoveryItem,
+                                              const String& defaultUoM) {
+  return
+  #  if FEATURE_TASKVALUE_UNIT_OF_MEASURE
+    #   if FEATURE_STRING_VARIABLES
+    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.uom :
+    #   endif // if FEATURE_STRING_VARIABLES
+    toUnitOfMeasureName(Cache.getTaskVarUnitOfMeasure(taskIndex, taskVarIndex), defaultUoM);
+  #  else // FEATURE_TASKVALUE_UNIT_OF_MEASURE
+    #   if FEATURE_STRING_VARIABLES
+    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.uom :
+    #   endif // if FEATURE_STRING_VARIABLES
+    defaultUoM;
+  #  endif // FEATURE_TASKVALUE_UNIT_OF_MEASURE
+}
+
+static String MQTT_DiscoveryHelperGetValueUoM(taskIndex_t   taskIndex,
+                                              uint8_t       taskVarIndex,
+                                              DiscoveryItem discoveryItem)
+{
+  return MQTT_DiscoveryHelperGetValueUoM(taskIndex, taskVarIndex, discoveryItem, EMPTY_STRING);
 }
 
 /********************************************************
  * Send MQTT AutoDiscovery in Home Assistant format
  *******************************************************/
-bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIndex,
-                                          ControllerSettingsStruct& ControllerSettings) {
+static bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIndex,
+                                                 ControllerSettingsStruct& ControllerSettings) {
   bool success = false;
 
   // Send plugin info
@@ -638,7 +810,8 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
             struct EventStruct TempEvent(x);
             const uint8_t varCount = discoveryItems[s].varIndex + discoveryItems[s].valueCount;
 
-            switch (discoveryItems[s].VType) {
+            switch (discoveryItems[s].VType)
+            {
               // VType values to support, mapped to device classes:
               case Sensor_VType::SENSOR_TYPE_SWITCH:
               case Sensor_VType::SENSOR_TYPE_SWITCH_INVERTED:
@@ -673,7 +846,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                   const String uom = MQTT_DiscoveryHelperGetValueUoM(x, v, discoveryItems[s]);
 
                   if (discoveryItems[s].canSet) {
-                    success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                    success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                      ControllerIndex,
                                                                      ControllerSettings,
                                                                      F("device_automation"),
@@ -687,7 +860,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                                                                      useGroupId ? elementName : EMPTY_STRING, elementIds,
                                                                      true); // Send Trigger discovery
                   }
-                  success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                  success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                    ControllerIndex,
                                                                    ControllerSettings,
                                                                    componentClass,
@@ -731,7 +904,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                     #  else // if FEATURE_MQTT_STATE_CLASS
                     const String stateClass = EMPTY_STRING;
                     #  endif // if FEATURE_MQTT_STATE_CLASS
-                    success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                    success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                      ControllerIndex,
                                                                      ControllerSettings,
                                                                      F("sensor"),
@@ -766,7 +939,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                     #  else // if FEATURE_MQTT_STATE_CLASS
                     const String stateClass = EMPTY_STRING;
                     #  endif // if FEATURE_MQTT_STATE_CLASS
-                    success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                    success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                      ControllerIndex,
                                                                      ControllerSettings,
                                                                      F("sensor"),
@@ -805,7 +978,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                     #  else // if FEATURE_MQTT_STATE_CLASS
                     const String stateClass = EMPTY_STRING;
                     #  endif // if FEATURE_MQTT_STATE_CLASS
-                    success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                    success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                      ControllerIndex,
                                                                      ControllerSettings,
                                                                      F("sensor"),
@@ -888,7 +1061,7 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
                   #  else // if FEATURE_MQTT_STATE_CLASS
                   const String stateClass = EMPTY_STRING;
                   #  endif // if FEATURE_MQTT_STATE_CLASS
-                  success &= MQTT_DiscoveryPublishWithStatusAndSet(x, v, valuename,
+                  success &= MQTT_DiscoveryPublishWithStatusAndSet(v, valuename,
                                                                    ControllerIndex,
                                                                    ControllerSettings,
                                                                    F("sensor"),
@@ -940,6 +1113,44 @@ bool MQTT_HomeAssistant_SendAutoDiscovery(controllerIndex_t         ControllerIn
           }
         }
       }
+    }
+  }
+
+  return success;
+}
+
+bool MQTT_SendAutoDiscovery(controllerIndex_t ControllerIndex, cpluginID_t CPluginID) {
+  bool success = true;
+
+  MakeControllerSettings(ControllerSettings); // -V522
+
+  if (!AllocatedControllerSettings()) {
+    return false;
+  }
+  LoadControllerSettings(ControllerIndex, *ControllerSettings);
+
+  if (ControllerSettings->mqtt_autoDiscovery()
+
+      // && (ControllerSettings->MqttAutoDiscoveryTrigger[0] != 0)
+      && (ControllerSettings->MqttAutoDiscoveryTopic[0] != 0)) {
+    #  ifndef BUILD_NO_DEBUG
+
+    if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+      addLog(LOG_LEVEL_INFO, concat(strformat(F("MQTT : AutoDiscovery for Controller %d CPlugin %d"),
+                                              ControllerIndex + 1, CPluginID),
+                                    validTaskIndex(mqttDiscoverOnlyTask) ?
+                                    strformat(F(", Task %d"), mqttDiscoverOnlyTask + 1) :
+                                    EMPTY_STRING));
+    }
+    #  endif // ifndef BUILD_NO_DEBUG
+
+
+    // Dispatch autoDiscovery per supported CPlugin
+    switch (CPluginID)
+    {
+      case 5: // CPLUGIN_ID_005 : Home assistant/openHAB
+        success = MQTT_HomeAssistant_SendAutoDiscovery(ControllerIndex, *ControllerSettings);
+        break;
     }
   }
 
@@ -1027,183 +1238,6 @@ bool MQTT_DiscoveryGetDeviceVType(taskIndex_t                 TaskIndex,
   }
 
   return discoveryItems.size() != orgLen; // Something added?
-}
-
-String MQTT_TaskValueUniqueName(const String& taskName,
-                                const String& valueName) {
-  String uniqueId = strformat(F("%s_%s_%s"), Settings.getHostname().c_str(), taskName.c_str(), valueName.c_str());
-
-  uniqueId.toLowerCase();
-  return uniqueId;
-}
-
-String MQTT_DiscoveryBuildValueTopic(const String            & topic,
-                                     struct EventStruct       *event,
-                                     uint8_t                   taskValueIndex,
-                                     const __FlashStringHelper*deviceClass,
-                                     const String            & uniqueId,
-                                     const String            & elementId,
-                                     const String            & valueName) {
-  String tmpTopic(topic);
-
-  #  if FEATURE_STRING_VARIABLES
-
-  if (taskValueIndex >= VARS_PER_TASK) {
-    parseValNameVariable(tmpTopic, valueName, false);
-  } else
-  #  endif // if FEATURE_STRING_VARIABLES
-  {
-    parseSingleControllerVariable(tmpTopic, event, taskValueIndex, false);
-  }
-  parseDeviceClassVariable(tmpTopic, deviceClass, false);
-  parseUniqueIdVariable(tmpTopic, uniqueId, false);
-  parseElementIdVariable(tmpTopic, elementId, false);
-  parseControllerVariables(tmpTopic, event, false); // Replace this last
-
-  while (tmpTopic.endsWith(F("/"))) {
-    tmpTopic = tmpTopic.substring(0, tmpTopic.length() - 1);
-  }
-
-  return tmpTopic;
-}
-
-bool MQTT_DiscoveryPublish(controllerIndex_t ControllerIndex,
-                           const String    & topic,
-                           const String    & discoveryMessage,
-                           taskIndex_t       x,
-                           uint8_t           v,
-                           bool              retainDsc) {
-  bool result = false;
-
-  // Send each discovery message separate
-  result = MQTTpublish(ControllerIndex, INVALID_TASK_INDEX, topic.c_str(), discoveryMessage.c_str(), retainDsc);
-  #  ifndef BUILD_NO_DEBUG
-
-  if (loglevelActiveFor(LOG_LEVEL_INFO)) {
-    addLog(LOG_LEVEL_INFO, strformat(F("MQTT : Discovery %d Task %d '%s': disc.topic: %s"),
-                                     result, x + 1, getTaskDeviceName(x).c_str(), topic.c_str()));
-    addLog(LOG_LEVEL_INFO, strformat(F("MQTT : Discovery payload: %s"),
-                                     discoveryMessage.c_str()));
-  }
-  #  endif // ifndef BUILD_NO_DEBUG
-  return result;
-}
-
-bool MQTT_DiscoveryPublishWithStatusAndSet(taskIndex_t               taskIndex,
-                                           uint8_t                   taskValue,
-                                           const String            & valueName,
-                                           controllerIndex_t         ControllerIndex,
-                                           ControllerSettingsStruct& ControllerSettings,
-                                           const __FlashStringHelper*componentClass,
-                                           const String            & deviceClass,
-                                           const String            & unitOfMeasure,
-                                           struct EventStruct       *event,
-                                           const String            & deviceElement,
-                                           const String            & stateClass,
-                                           bool                      success,
-                                           bool                      hasSet,
-                                           bool                      hasIcon,
-                                           const String            & elementName,
-                                           const String            & elementId,
-                                           bool                      sendTrigger) {
-  if (!valueName.isEmpty()) {
-    //    const String discoveryTopic(ControllerSettings.MqttAutoDiscoveryTopic);
-    //    const String publishTopic(ControllerSettings.Publish);
-
-    const String taskName = makeHomeAssistantCompliantName(getTaskDeviceName(taskIndex));
-    const String valName  = makeHomeAssistantCompliantName(valueName);
-
-    const String uniqueId = elementName.isEmpty() ? MQTT_TaskValueUniqueName(taskName, valName)
-                                                  : strformat(F("%s_%s"), elementId.c_str(), valName.c_str());
-    String message;
-    {
-      const String publish = MQTT_DiscoveryBuildValueTopic(ControllerSettings.Publish,
-                                                           event,
-                                                           taskValue,
-                                                           componentClass,
-                                                           uniqueId,
-                                                           elementId,
-                                                           valName);
-
-      if (sendTrigger) {
-        // triggerMessage
-        message = strformat(F("{\"atype\":\"trigger\",\"t\":\"%s\","
-                              "\"p\":\"device_automation\","
-                              "\"type\":\"button_short_press\"," // FIXME ?
-                              "\"stype\":\"switch_1\""           // FIXME ?
-                              "%s}"),                            // deviceElement is used to pass in the TriggerState
-                            publish.c_str(), deviceElement.c_str());
-      } else {
-        // discoveryMessage
-        const String withSet   = hasSet ? F(",\"cmd_t\":\"~/set\"") : EMPTY_STRING;
-        const String schema    = hasSet ? EMPTY_STRING : "\"schema\":\"basic\",";
-        const String devOrIcon = hasIcon ? F("ic") : F("dev_cla");
-        const String withUoM   = unitOfMeasure.isEmpty() ? EMPTY_STRING :
-                                 strformat(F(",\"unit_of_meas\":\"%s\""), unitOfMeasure.c_str());
-        const String stateJson = stateClass.isEmpty() ? EMPTY_STRING :
-                                 strformat(F(",\"stat_cla\":\"%s\""),     stateClass.c_str());
-
-        message = strformat(F("{\"~\":\"%s\",\"name\":\"%s %s\",\"uniq_id\":\"%s\",%s"
-                              "\"%s\":\"%s\"%s%s%s,\"stat_t\":\"~\""
-                              "%s}"), // deviceElement last
-                            publish.c_str(), taskName.c_str(), valName.c_str(), uniqueId.c_str(), schema.c_str(),
-                            devOrIcon.c_str(), deviceClass.c_str(), withUoM.c_str(), stateJson.c_str(), withSet.c_str(),
-                            deviceElement.c_str());
-      }
-    }
-
-    const bool retainDsc = ControllerSettings.mqtt_retainDiscovery();
-    String     topic;
-    {
-      const String discoveryUrl = MQTT_DiscoveryBuildValueTopic(ControllerSettings.MqttAutoDiscoveryTopic,
-                                                                event,
-                                                                taskValue,
-                                                                componentClass,
-                                                                uniqueId,
-                                                                elementId,
-                                                                valName);
-      const String discoveryConfig(parseStringKeepCase(ControllerSettings.MqttAutoDiscoveryConfig, 1, '|'));
-      topic = discoveryConfig.isEmpty()
-        ? concat(discoveryUrl, F("/config"))
-        : concat(discoveryUrl, discoveryConfig);
-    }
-
-    return MQTT_DiscoveryPublish(ControllerIndex,
-                                 topic,
-                                 message,
-                                 taskIndex,
-                                 taskValue,
-                                 retainDsc);
-  }
-  return success;
-}
-
-String MQTT_DiscoveryHelperGetValueName(taskIndex_t   taskIndex,
-                                        uint8_t       taskVarIndex,
-                                        DiscoveryItem discoveryItem) {
-  return
-    #  if FEATURE_STRING_VARIABLES
-    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.varName :
-    #  endif // if FEATURE_STRING_VARIABLES
-    getTaskValueName(taskIndex, taskVarIndex);
-}
-
-String MQTT_DiscoveryHelperGetValueUoM(taskIndex_t   taskIndex,
-                                       uint8_t       taskVarIndex,
-                                       DiscoveryItem discoveryItem,
-                                       const String& defaultUoM) {
-  return
-  #  if FEATURE_TASKVALUE_UNIT_OF_MEASURE
-    #   if FEATURE_STRING_VARIABLES
-    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.uom :
-    #   endif // if FEATURE_STRING_VARIABLES
-    toUnitOfMeasureName(Cache.getTaskVarUnitOfMeasure(taskIndex, taskVarIndex), defaultUoM);
-  #  else // FEATURE_TASKVALUE_UNIT_OF_MEASURE
-    #   if FEATURE_STRING_VARIABLES
-    discoveryItem.varIndex >= VARS_PER_TASK ? discoveryItem.uom :
-    #   endif // if FEATURE_STRING_VARIABLES
-    defaultUoM;
-  #  endif // FEATURE_TASKVALUE_UNIT_OF_MEASURE
 }
 
 # endif // if FEATURE_MQTT_DISCOVER

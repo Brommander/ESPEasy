@@ -64,7 +64,7 @@ void handle_root() {
   if (captivePortal()) { // If captive portal redirect instead of displaying the page.
     return;
   }
-
+/*
   // if Wifi setup, launch setup wizard if AP_FORCE_SETUP is set.
   if (!ESPEasy::net::NetworkConnected() &&
       Settings.ApCaptivePortal())
@@ -72,26 +72,26 @@ void handle_root() {
     web_server.send_P(200, (PGM_P)F("text/html"), (PGM_P)F("<meta HTTP-EQUIV='REFRESH' content='0; url=/setup'>"));
     return;
   }
-
-  if (!MAIN_PAGE_SHOW_BASIC_INFO_NOT_LOGGED_IN) {
+*/
+  #if !MAIN_PAGE_SHOW_BASIC_INFO_NOT_LOGGED_IN
     if (!isLoggedIn()) { return; }
-  }
+  #endif
 
   const bool loggedIn = isLoggedIn(false);
 
-  navMenuIndex = 0;
+  navMenuIndex = MENU_INDEX_MAIN;
 
   // if index.htm exists on FS serve that one (first check if gziped version exists)
   if (loadFromFS(F("/index.htm.gz"))) { return; }
 
   if (loadFromFS(F("/index.htm"))) { return; }
 
-  TXBuffer.startStream();
-
   boolean rebootCmd = false;
   String  sCommand  = webArg(F("cmd"));
   rebootCmd = strcasecmp_P(sCommand.c_str(), PSTR("reboot")) == 0;
-  sendHeadandTail_stdtemplate(_HEAD, rebootCmd);
+
+  // Already checked for logged in state
+  startStream_send_stdTemplate_NoLoginCheck(MENU_INDEX_MAIN, rebootCmd);
 
   // TODO: move this to handle_tools, from where it is actually called?
 
@@ -211,12 +211,8 @@ void handle_root() {
         addFormHeader(F("Command Argument"));
         addRowLabel(F("Command"));
         addHtml(sCommand);
-        
-        addRowColspan(2);
-        addHtml(F("Command Output<BR><textarea readonly rows='10' wrap='on'>"));
-        addHtml(printWebString);
-        addHtml(F("</textarea>"));
-        free_string(printWebString);
+
+        handle_printWebString();
       }
     }
     html_end_table();
@@ -232,13 +228,13 @@ void handle_root() {
     html_table_header(F("Node List"));
     html_table_header(F("Name"));
 
-    if (MAIN_PAGE_SHOW_NODE_LIST_BUILD) {
+    #if MAIN_PAGE_SHOW_NODE_LIST_BUILD
       html_table_header(getLabel(LabelType::BUILD_DESC));
-    }
+    #endif
 
-    if (MAIN_PAGE_SHOW_NODE_LIST_TYPE) {
+    #if MAIN_PAGE_SHOW_NODE_LIST_TYPE
       html_table_header(F("Type"));
-    }
+    #endif
     html_table_header(F("IP"), 160); // Should fit "255.255.255.255"
     html_table_header(F("Load (%)"));
     html_table_header(F("Age (s)"));
@@ -275,17 +271,17 @@ void handle_root() {
         }
         html_TD();
 
-        if (MAIN_PAGE_SHOW_NODE_LIST_BUILD) {
+        #if MAIN_PAGE_SHOW_NODE_LIST_BUILD
           if (it->second.build) {
             addHtml(formatSystemBuildNr(it->second.build));
           }
           html_TD();
-        }
+        #endif
 
-        if (MAIN_PAGE_SHOW_NODE_LIST_TYPE) {
+        #if MAIN_PAGE_SHOW_NODE_LIST_TYPE
           addHtml(it->second.getNodeTypeDisplayString());
           html_TD();
-        }
+        #endif
 
         if (it->second.ip[0] != 0
 #  if FEATURE_USE_IPV6
@@ -404,10 +400,13 @@ void handle_root() {
     html_end_table();
   # endif // if FEATURE_ESPEASY_P2P
     html_end_form();
+    sendTail_stdtemplate();
 
+    // FIXME TD-er: Is this still needed?
     free_string(printWebString);
     printToWeb = false;
-    sendHeadandTail_stdtemplate(_TAIL);
+    
+    return; // TXBuffer.endStream() was already sent
   }
   TXBuffer.endStream();
 }

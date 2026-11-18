@@ -188,7 +188,8 @@ enum class eHeaderContent : uint8_t {
 enum class p036_resolution : uint8_t {
   pix128x64 = 0u,
   pix128x32 = 1u,
-  pix64x48  = 2u
+  pix64x48  = 2u,
+  pix72x40  = 3u,
 };
 
 enum class ePageScrollSpeed : uint8_t {
@@ -491,7 +492,7 @@ public:
   # endif // ifdef P036_ENABLE_LEFT_ALIGN
 
   # if P036_FEATURE_DISPLAY_PREVIEW
-  bool web_show_values();
+  bool web_show_values(struct EventStruct *event);
   # endif // if P036_FEATURE_DISPLAY_PREVIEW
 
   // Instantiate display here - does not work to do this within the INIT call

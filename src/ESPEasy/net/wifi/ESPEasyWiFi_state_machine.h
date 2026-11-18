@@ -7,7 +7,7 @@
 # include "../../../src/Helpers/LongTermTimer.h"
 
 # include "../wifi/WiFi_STA_connected_state.h"
-# include "../wifi/WiFi_State.h"
+# include "../wifi/WiFi_STA_State.h"
 
 # include <IPAddress.h>
 
@@ -30,7 +30,7 @@ public:
     - STA-only, AP as fallback
     - STA+AP  (e.g. to allow others to use ESP as gateway, ESP32-only)
     - AP-only
-    
+
   */
   enum class ESPEasyWiFi_mode_e {
     Off,
@@ -58,12 +58,15 @@ private:
 
   void begin();
 
+  void loop_internal();
+
+
 public:
 
   // Process the state machine for managing WiFi connection
   void        loop();
 
-  WiFiState_e getState() const
+  WiFi_STA_State_e getState() const
   {
     return _state;
   }
@@ -80,7 +83,7 @@ public:
 
 private:
 
-  void setState(WiFiState_e newState,
+  void setState(WiFi_STA_State_e newState,
                 uint32_t    timeout = 0);
 
   // Handle timeouts + start of AP mode
@@ -100,6 +103,8 @@ public:
 
   bool shouldStartAP_fallback() const;
 
+  bool shouldRedirectTo_setup() const;
+
 private:
 
   //  WiFi_AP_Candidate _active_sta;
@@ -108,25 +113,25 @@ private:
   //  String _last_ssid;
   //  MAC_address _last_bssid;
   //  uint8_t _last_channel = 0;
-  WiFiState_e _state = WiFiState_e::Disabled;
+  WiFi_STA_State_e _state = WiFi_STA_State_e::Disabled;
 
   ESPEasyWiFi_mode_e _mode = ESPEasyWiFi_mode_e::Off;
 
   LongTermTimer _last_state_change;
   LongTermTimer _state_timeout;
   LongTermTimer _last_seen_connected;
+  LongTermTimer _last_TX_pwr_update;
 
   uint8_t _scan_channel{};
+  bool _scanCompleted{};
 
   //  LongTermTimer _AP_start_timestamp;
 
   uint32_t _connect_attempt = 0;
-  
+  bool _connectAttemptStarted{};
 
 
   //  uint32_t _nrReconnects = 0;
-
-  bool _callbackError = false;
 
   // Special modes for initial setup or re-configuration of a node via serial port/IMPROV
   //  bool _improvActive = false;
@@ -139,6 +144,8 @@ private:
   #else
   bool _disabledAtBoot = false;
   #endif
+
+  bool _inLoop = false;
 
   //  bool _passiveScan       = false;
   //  bool _includeHiddenSSID = false;

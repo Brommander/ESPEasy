@@ -31,250 +31,8 @@
 # endif
 
 
-// ********************************************************************************
-// Web Interface Setup Wizard
-// ********************************************************************************
 
-# define HANDLE_SETUP_SCAN_STAGE       0
-# define HANDLE_SETUP_CONNECTING_STAGE 1
-
-void handle_setup() {
-  # ifndef BUILD_NO_RAM_TRACKER
-  checkRAM(F("handle_setup"));
-  # endif // ifndef BUILD_NO_RAM_TRACKER
-
-  // Do not check client IP range allowed.
-  TXBuffer.startStream();
-
-  const bool connected = ESPEasy::net::NetworkConnected();
-
-
-  //  if (connected) {
-  navMenuIndex = MENU_INDEX_SETUP;
-  sendHeadandTail_stdtemplate(_HEAD);
-
-  /*  } else {
-      sendHeadandTail(F("TmplAP"));
-     }
-   */
-
-  const bool clearButtonPressed   = hasArg(F("performclearcredentials"));
-  const bool clearWiFiCredentials =
-    isFormItemChecked(F("clearcredentials")) && clearButtonPressed;
-
-  {
-    if (clearWiFiCredentials) {
-# if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-
-      if (SecuritySettings.Password[0] == 0) {
-        // No password set, so also clear the regular credentials
-        // SecuritySettings.clearWiFiCredentials();
-      }
-      SecuritySettings_deviceSpecific.clearWiFiCredentials();
-
-# else // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-      SecuritySettings.clearWiFiCredentials();
-# endif // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-
-      addHtmlError(SaveSecuritySettings());
-
-      html_add_form();
-      html_table_class_normal();
-
-      addFormHeader(F("WiFi credentials cleared, reboot now"));
-      html_end_table();
-    } else {
-      //    if (active_network_medium == ESPEasy::net::NetworkMedium_t::WIFI)
-      //    {
-      static uint8_t status       = HANDLE_SETUP_SCAN_STAGE;
-      static uint8_t refreshCount = 0;
-
-      String ssid  = webArg(F("ssid"));
-      String other = webArg(F("other"));
-      String password;
-      bool   passwordGiven = getFormPassword(F("pass"), password);
-
-      if (passwordGiven) {
-        passwordGiven = !password.isEmpty();
-      }
-      const bool emptyPassAllowed = isFormItemChecked(F("emptypass"));
-      const bool performRescan    = hasArg(F("performrescan"));
-
-      if (performRescan) {
-        //          WiFiEventData.lastScanMoment.clear();
-        ESPEasy::net::wifi::WifiScan(false);
-      }
-
-      if (!other.isEmpty())
-      {
-        ssid = other;
-      }
-
-      if (!performRescan) {
-        // if ssid config not set and params are both provided
-        if ((status == HANDLE_SETUP_SCAN_STAGE) && (!ssid.isEmpty()) /*&& strcasecmp(SecuritySettings.WifiSSID, "ssid") == 0 */)
-        {
-          if (clearButtonPressed) {
-            addHtmlError(F("Warning: Need to confirm to clear WiFi credentials"));
-          } else if (!passwordGiven && !emptyPassAllowed) {
-            addHtmlError(F("No password entered"));
-          } else {
-            // TODO TD-er: Must store in separate file when system password is set
-# if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-
-            // TODO TD-er: Must check whether password is set: SecuritySettings.Password
-            SecuritySettings_deviceSpecific.setWiFiCredentials(0, ssid, password);
-# else // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-            safe_strncpy(SecuritySettings.WifiKey,  password.c_str(), sizeof(SecuritySettings.WifiKey));
-            safe_strncpy(SecuritySettings.WifiSSID, ssid.c_str(),     sizeof(SecuritySettings.WifiSSID));
-# endif // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
-
-            // Hidden SSID
-            Settings.IncludeHiddenSSID(isFormItemChecked(LabelType::CONNECT_HIDDEN_SSID));
-            Settings.HiddenSSID_SlowConnectPerBSSID(isFormItemChecked(LabelType::HIDDEN_SSID_SLOW_CONNECT));
-# ifdef ESP32
-            Settings.PassiveWiFiScan(isFormItemChecked(LabelType::WIFI_PASSIVE_SCAN));
-# endif
-
-            addHtmlError(SaveSettings());
-
-            //              WiFiEventData.wifiSetupConnect         = true;
-            //              WiFiEventData.wifiConnectAttemptNeeded = true;
-            ESPEasy::net::wifi::WiFi_AP_Candidates.force_reload(); // Force reload of the credentials and found APs from the last scan
-            ESPEasyWiFi.setMode(ESPEasy::net::wifi::ESPEasyWiFi_t::ESPEasyWiFi_mode_e::Setup);
-# ifndef BUILD_NO_DEBUG
-
-            if (loglevelActiveFor(LOG_LEVEL_INFO)) {
-              String reconnectlog = F("WIFI : Credentials Changed, retry connection. SSID: ");
-              reconnectlog += ssid;
-              addLogMove(LOG_LEVEL_INFO, reconnectlog);
-            }
-# endif // ifndef BUILD_NO_DEBUG
-            status       = HANDLE_SETUP_CONNECTING_STAGE;
-            refreshCount = 0;
-            String dummy;
-            ESPEasy::net::NWPluginCall(
-              NWPlugin::Function::NWPLUGIN_CREDENTIALS_CHANGED, 0, dummy);
-          }
-        }
-      }
-      html_BR();
-      wrap_html_tag(F("h1"), connected ? F("Connected to a network") : F("Wifi Setup wizard"));
-      html_add_form();
-
-      switch (status)
-      {
-        case HANDLE_SETUP_SCAN_STAGE:
-        {
-          // first step, scan and show access points within reach...
-          handle_setup_scan_and_show(ssid, other, password);
-          break;
-        }
-        case  HANDLE_SETUP_CONNECTING_STAGE:
-        {
-          if (!handle_setup_connectingStage(refreshCount)) {
-            status = HANDLE_SETUP_SCAN_STAGE;
-          }
-          ++refreshCount;
-          break;
-        }
-      }
-
-      /*
-          } else {
-            html_add_form();
-            addFormHeader(F("Ethernet Setup Complete"));
-
-          }
-       */
-
-      html_table_class_normal();
-      html_TR();
-# if defined(WEBSERVER_SYSINFO) && !defined(WEBSERVER_SYSINFO_MINIMAL)
-      handle_sysinfo_NetworkServices();
-# endif
-
-      if (connected) {
-
-        // addFormHeader(F("Current network configuration"));
-
-# ifdef WEBSERVER_SYSINFO
-        handle_sysinfo_Network();
-# endif
-
-        addFormSeparator(2);
-
-        html_TR_TD();
-        html_TD();
-
-        # if SETUP_PAGE_SHOW_CONFIG_BUTTON
-
-        if (!clientIPinSubnetDefaultNetwork()) {
-          String host = formatIP(ESPEasy::net::NetworkLocalIP());
-          String url  = F("http://");
-          url += host;
-          url += F("/config");
-          addButton(url, host);
-        }
-        # endif // if SETUP_PAGE_SHOW_CONFIG_BUTTON
-
-        //        WiFiEventData.wifiSetup = false;
-      }
-      html_end_table();
-
-      html_BR();
-      html_BR();
-      html_BR();
-      html_BR();
-      html_BR();
-      html_BR();
-      html_BR();
-
-      html_table_class_normal();
-
-      addFormHeader(F("Advanced WiFi settings"));
-      {
-        LabelType::Enum labels[]{
-          LabelType::CONNECT_HIDDEN_SSID
-# ifdef ESP32
-          , LabelType::WIFI_PASSIVE_SCAN
-# endif
-          , LabelType::HIDDEN_SSID_SLOW_CONNECT
-        };
-        addFormCheckBoxes(labels, NR_ELEMENTS(labels));
-      }
-
-      html_BR();
-      html_BR();
-
-      addFormHeader(F("Clear WiFi credentials"));
-      addFormCheckBox(F("Confirm clear"), F("clearcredentials"), false);
-
-      html_TR_TD();
-      html_TD();
-      addSubmitButton(F("Clear and Reboot"), F("performclearcredentials"), F("red"));
-      html_end_table();
-    }
-
-    html_end_form();
-  }
-
-  //  if (connected) {
-  sendHeadandTail_stdtemplate(_TAIL);
-
-  /*  } else {
-      sendHeadandTail(F("TmplAP"), true);
-     }
-   */
-  TXBuffer.endStream();
-  delay(10);
-
-  if (clearWiFiCredentials) {
-    reboot(IntendedRebootReason_e::RestoreSettings);
-  }
-}
-
-void handle_setup_scan_and_show(const String& ssid, const String& other, const String& password) {
+static void handle_setup_scan_and_show(const String& ssid, const String& other, const String& password) {
   int8_t scanCompleteStatus = ESPEasy::net::wifi::WiFi_AP_Candidates.scanComplete();
   const bool needsRescan    =
     (scanCompleteStatus == 0 || // No AP found
@@ -417,7 +175,7 @@ void handle_setup_scan_and_show(const String& ssid, const String& other, const S
   html_end_table();
 }
 
-bool handle_setup_connectingStage(uint8_t refreshCount) {
+static bool handle_setup_connectingStage(uint8_t refreshCount) {
   if (refreshCount > 0)
   {
     //      safe_strncpy(SecuritySettings.WifiSSID, "ssid", sizeof(SecuritySettings.WifiSSID));
@@ -453,6 +211,248 @@ bool handle_setup_connectingStage(uint8_t refreshCount) {
   html_add_script_end();
   addHtml(F("seconds while trying to connect"));
   return true;
+}
+
+
+
+// ********************************************************************************
+// Web Interface Setup Wizard
+// ********************************************************************************
+
+# define HANDLE_SETUP_SCAN_STAGE       0
+# define HANDLE_SETUP_CONNECTING_STAGE 1
+
+void handle_setup() {
+  # ifndef BUILD_NO_RAM_TRACKER
+  checkRAM(F("handle_setup"));
+  # endif // ifndef BUILD_NO_RAM_TRACKER
+
+
+  const bool connected = ESPEasy::net::NetworkConnected();
+
+
+  //  if (connected) {
+
+  // TODO TD-er: Should also check for logged in state here?
+  // if (!startStream_send_stdTemplate(MENU_INDEX_SETUP)) { return; }
+  startStream_send_stdTemplate_NoLoginCheck(MENU_INDEX_SETUP);
+
+  /*  } else {
+      sendHeadandTail(F("TmplAP"));
+     }
+   */
+
+  const bool clearButtonPressed   = hasArg(F("performclearcredentials"));
+  const bool clearWiFiCredentials =
+    isFormItemChecked(F("clearcredentials")) && clearButtonPressed;
+
+  {
+    if (clearWiFiCredentials) {
+# if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+
+      if (SecuritySettings.Password[0] == 0) {
+        // No password set, so also clear the regular credentials
+        // SecuritySettings.clearWiFiCredentials();
+      }
+      SecuritySettings_deviceSpecific.clearWiFiCredentials();
+
+# else // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+      SecuritySettings.clearWiFiCredentials();
+# endif // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+
+      addHtmlError(SaveSecuritySettings());
+
+      html_add_form();
+      html_table_class_normal();
+
+      addFormHeader(F("WiFi credentials cleared, reboot now"));
+      html_end_table();
+    } else {
+      //    if (active_network_medium == ESPEasy::net::NetworkMedium_t::WIFI)
+      //    {
+      static uint8_t status       = HANDLE_SETUP_SCAN_STAGE;
+      static uint8_t refreshCount = 0;
+
+      String ssid  = webArg(F("ssid"));
+      String other = webArg(F("other"));
+      String password;
+      bool   passwordGiven = getFormPassword(F("pass"), password);
+
+      if (passwordGiven) {
+        passwordGiven = !password.isEmpty();
+      }
+      const bool emptyPassAllowed = isFormItemChecked(F("emptypass"));
+      const bool performRescan    = hasArg(F("performrescan"));
+
+      if (performRescan) {
+        //          WiFiEventData.lastScanMoment.clear();
+        ESPEasy::net::wifi::WifiScan(false);
+      }
+
+      if (!other.isEmpty())
+      {
+        ssid = other;
+      }
+
+      if (!performRescan) {
+        // if ssid config not set and params are both provided
+        if ((status == HANDLE_SETUP_SCAN_STAGE) && (!ssid.isEmpty()) /*&& strcasecmp(SecuritySettings.WifiSSID, "ssid") == 0 */)
+        {
+          if (clearButtonPressed) {
+            addHtmlError(F("Warning: Need to confirm to clear WiFi credentials"));
+          } else if (!passwordGiven && !emptyPassAllowed) {
+            addHtmlError(F("No password entered"));
+          } else {
+            // TODO TD-er: Must store in separate file when system password is set
+# if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+
+            // TODO TD-er: Must check whether password is set: SecuritySettings.Password
+            SecuritySettings_deviceSpecific.setWiFiCredentials(0, ssid, password);
+# else // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+            safe_strncpy(SecuritySettings.WifiKey,  password.c_str(), sizeof(SecuritySettings.WifiKey));
+            safe_strncpy(SecuritySettings.WifiSSID, ssid.c_str(),     sizeof(SecuritySettings.WifiSSID));
+# endif // if FEATURE_STORE_CREDENTIALS_SEPARATE_FILE
+
+            // Hidden SSID
+            Settings.IncludeHiddenSSID(isFormItemChecked(LabelType::CONNECT_HIDDEN_SSID));
+            Settings.HiddenSSID_SlowConnectPerBSSID(isFormItemChecked(LabelType::HIDDEN_SSID_SLOW_CONNECT));
+# ifdef ESP32
+            Settings.PassiveWiFiScan(isFormItemChecked(LabelType::WIFI_PASSIVE_SCAN));
+# endif
+
+            addHtmlError(SaveSettings());
+
+            //              WiFiEventData.wifiSetupConnect         = true;
+            //              WiFiEventData.wifiConnectAttemptNeeded = true;
+            ESPEasy::net::wifi::WiFi_AP_Candidates.force_reload(); // Force reload of the credentials and found APs from the last scan
+            ESPEasyWiFi.setMode(ESPEasy::net::wifi::ESPEasyWiFi_t::ESPEasyWiFi_mode_e::Setup);
+# ifndef BUILD_NO_DEBUG
+
+            if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+              addLogMove(LOG_LEVEL_INFO, concat(F("WIFI : Credentials Changed, retry connection. SSID: "), ssid));
+            }
+# endif // ifndef BUILD_NO_DEBUG
+            status       = HANDLE_SETUP_CONNECTING_STAGE;
+            refreshCount = 0;
+            String dummy;
+            ESPEasy::net::NWPluginCall(
+              NWPlugin::Function::NWPLUGIN_CREDENTIALS_CHANGED, 0, dummy);
+          }
+        }
+      }
+      html_BR();
+      wrap_html_tag(F("h1"), connected ? F("Connected to a network") : F("Wifi Setup wizard"));
+      html_add_form();
+
+      switch (status)
+      {
+        case HANDLE_SETUP_SCAN_STAGE:
+        {
+          // first step, scan and show access points within reach...
+          handle_setup_scan_and_show(ssid, other, password);
+          break;
+        }
+        case  HANDLE_SETUP_CONNECTING_STAGE:
+        {
+          if (!handle_setup_connectingStage(refreshCount)) {
+            status = HANDLE_SETUP_SCAN_STAGE;
+          }
+          ++refreshCount;
+          break;
+        }
+      }
+
+      /*
+          } else {
+            html_add_form();
+            addFormHeader(F("Ethernet Setup Complete"));
+
+          }
+       */
+
+      html_table_class_normal();
+      html_TR();
+# if defined(WEBSERVER_SYSINFO) && !defined(WEBSERVER_SYSINFO_MINIMAL)
+      handle_sysinfo_NetworkServices();
+# endif
+
+      if (connected) {
+
+        // addFormHeader(F("Current network configuration"));
+
+# ifdef WEBSERVER_SYSINFO
+        handle_sysinfo_Network();
+# endif
+
+        addFormSeparator(2);
+
+        html_TR_TD();
+        html_TD();
+
+        # if SETUP_PAGE_SHOW_CONFIG_BUTTON
+
+        if (!clientIPinSubnetDefaultNetwork()) {
+          String host = formatIP(ESPEasy::net::NetworkLocalIP());
+          String url  = F("http://");
+          url += host;
+          url += F("/config");
+          addButton(url, host);
+        }
+        # endif // if SETUP_PAGE_SHOW_CONFIG_BUTTON
+
+        //        WiFiEventData.wifiSetup = false;
+      }
+      html_end_table();
+
+      html_BR();
+      html_BR();
+      html_BR();
+      html_BR();
+      html_BR();
+      html_BR();
+      html_BR();
+
+      html_table_class_normal();
+
+      addFormHeader(F("Advanced WiFi settings"));
+      {
+        LabelType::Enum labels[]{
+          LabelType::CONNECT_HIDDEN_SSID
+# ifdef ESP32
+          , LabelType::WIFI_PASSIVE_SCAN
+# endif
+          , LabelType::HIDDEN_SSID_SLOW_CONNECT
+        };
+        addFormCheckBoxes(labels, NR_ELEMENTS(labels));
+      }
+
+      html_BR();
+      html_BR();
+
+      addFormHeader(F("Clear WiFi credentials"));
+      addFormCheckBox(F("Confirm clear"), F("clearcredentials"), false);
+
+      html_TR_TD();
+      html_TD();
+      addSubmitButton(F("Clear and Reboot"), F("performclearcredentials"), F("red"));
+      html_end_table();
+    }
+
+    html_end_form();
+  }
+
+  //  if (connected) {
+  sendTail_stdtemplate();
+
+  /*  } else {
+      sendHeadandTail(F("TmplAP"), true);
+     }
+   */
+  delay(10);
+
+  if (clearWiFiCredentials) {
+    reboot(IntendedRebootReason_e::RestoreSettings);
+  }
 }
 
 #endif // ifdef WEBSERVER_SETUP

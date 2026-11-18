@@ -32,6 +32,35 @@ struct TX_RX_traffic_count {
 
 struct NWPluginData_static_runtime {
 #ifdef ESP32
+  enum class DeferredEventType : uint8_t {
+    Started,
+    Stopped,
+    Connected,
+    Disconnected,
+    GotIP,
+    LostIP,
+    GotIPv6,
+    WiFiOffLog,
+    WiFiReadyLog,
+    WiFiScanDoneLog,
+    WiFiAuthmodeChangeLog,
+    APStarted,
+    APStationDisconnected,
+    APStationIPAssigned,
+    APStationConnectedLog,
+    APStationDisconnectedLog,
+    APStationIPAssignedLog,
+    APGotIPv6Log
+  };
+
+  void queueEvent(DeferredEventType event
+#if FEATURE_USE_IPV6
+                  , const ip_event_got_ip6_t *ipv6Event = nullptr
+#endif
+                  );
+#endif
+
+#ifdef ESP32
   NWPluginData_static_runtime(
     NetworkInterface *netif,
     const String    & eventInterfaceName = EMPTY_STRING);
@@ -127,6 +156,11 @@ struct NWPluginData_static_runtime {
 
   void     processEvents();
 
+  bool     setStaticIP(const IPAddress& ip,
+                       const IPAddress& gateway,
+                       const IPAddress& subnetmask,
+                       const IPAddress& dns);
+
   // =============================================
   // OnOffTimers for keeping track of:
   // - start/stop of interface
@@ -157,9 +191,26 @@ struct NWPluginData_static_runtime {
   bool _enableIPv6{}; // Cached enableIPv6 flag as it is being used from callbacks
 #endif
 
+  IPAddress _ip, _gateway, _sn, _dns;
+  bool      _useStaticIP{}; // Added to make sure we don't have to re-check IP from a callback
+
 private:
 
 #ifdef ESP32
+  struct DeferredEvent {
+    DeferredEventType type{};
+# if FEATURE_USE_IPV6
+    ip_event_got_ip6_t ipv6Event{};
+# endif
+
+  };
+
+  static constexpr uint8_t DEFERRED_EVENT_QUEUE_SIZE = 16;
+  DeferredEvent            _deferredEvents[DEFERRED_EVENT_QUEUE_SIZE]{};
+  uint8_t                  _deferredEventRead{};
+  uint8_t                  _deferredEventWrite{};
+  bool                     _deferredEventOverflow{};
+
   NetworkInterface *_netif{};
 #endif // ifdef ESP32
 

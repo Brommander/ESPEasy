@@ -51,7 +51,7 @@ void initAnalogWrite()
 
 // Match frequency and resolution and optionally adjust duty accordingly
 // @return adjusted duty cycle
-uint32_t adapt_ledc_frequency_resolution_duty(uint32_t& frequency, uint8_t& resolution, uint32_t duty = 0)
+static uint32_t adapt_ledc_frequency_resolution_duty(uint32_t& frequency, uint8_t& resolution, uint32_t duty = 0)
 {
   while ((40000000u >> resolution) < frequency && resolution > 1) {
     --resolution;
@@ -235,6 +235,9 @@ bool set_Gpio_PWM(int gpio, uint32_t dutyCycle, uint32_t fadeDuration_ms, uint32
 #endif // if defined(ESP8266)
 
 #if ESP_IDF_VERSION_MAJOR >= 5
+
+// FIXME TD-er: For now fade is disabled. See: https://github.com/espressif/arduino-esp32/issues/12709
+//fadeDuration_ms = 0;
 
   if (fadeDuration_ms == 0)
   {

@@ -145,11 +145,13 @@ bool   P111_data_struct::reset(int8_t csPin,
                                int8_t resetPin) {
   if ((resetPin != -1) &&
       (initPhase == P111_initPhases::Ready)) {
+    #ifndef BUILD_NO_DEBUG
     if (loglevelActiveFor(LOG_LEVEL_INFO)) {
       addLogMove(
         LOG_LEVEL_INFO,
         concat(F("MFRC522: Reset on pin: "), resetPin));
     }
+    #endif // ifndef BUILD_NO_DEBUG
 
     init();
     return true;
@@ -397,6 +399,7 @@ bool P111_data_struct::plugin_fifty_per_second(struct EventStruct *event) {
     }
   }
 
+  // TODO TD-er: We don't use the timestamp, would a simple boolean flag also be enough?
   if (_irq_pin_time_micros > _last_served_irq_pin_time_micros) {
     _last_served_irq_pin_time_micros = _irq_pin_time_micros;
 

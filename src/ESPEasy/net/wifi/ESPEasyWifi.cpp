@@ -11,15 +11,15 @@
 # include "../../../src/Helpers/ESPEasy_time_calc.h"
 # include "../../../src/Helpers/StringConverter.h"
 
-#if FEATURE_TASKVALUE_UNIT_OF_MEASURE
-# include "../../../src/Helpers/ESPEasy_UnitOfMeasure.h"
-#endif
+# if FEATURE_TASKVALUE_UNIT_OF_MEASURE
+#  include "../../../src/Helpers/ESPEasy_UnitOfMeasure.h"
+# endif
 
-#ifdef ESP8266
-# ifndef BUILD_NO_DEBUG
-#include "../../../src/Helpers/StringGenerator_WiFi.h"
-#endif
-#endif
+# ifdef ESP8266
+#  ifndef BUILD_NO_DEBUG
+#   include "../../../src/Helpers/StringGenerator_WiFi.h"
+#  endif
+# endif // ifdef ESP8266
 
 # ifdef ESP32
 #  include <WiFiGeneric.h>
@@ -38,6 +38,10 @@ extern "C" {
 
 # endif // ifdef ESP32
 
+
+# ifdef BOARD_HAS_SDIO_ESP_HOSTED
+#  define MIN_REQUIRED_ESP_HOSTED_FW  0x00020600
+# endif
 
 namespace ESPEasy {
 namespace net {
@@ -83,24 +87,40 @@ namespace wifi {
    - Set timerAPstart when "valid WiFi connection" state is observed.
    - Disable timerAPstart when ESPEASY_WIFI_SERVICES_INITIALIZED wifi state is reached.
 
-   For the first attempt to connect after a cold boot (RTC values are 0), a WiFi scan will be
-   performed to find the strongest known SSID.
-   This will set RTC.lastBSSID and RTC.lastWiFiChannel
-
-   Quick reconnect (using BSSID/channel of last connection) when both apply:
-   - If wifi_connect_attempt < 3
-   - RTC.lastBSSID is known
-   - RTC.lastWiFiChannel != 0
-
-   Change of wifi settings when both apply:
-   - "other" settings valid
-   - (wifi_connect_attempt % 2) == 0
-
-   Reset of wifi_connect_attempt to 0 when both apply:
-   - connection successful
-   - Connection stable (connected for > 5 minutes)
+   The last successful BSSID, channel, and credential index are saved to RTC when connected.
+   ESP32 also stores them in NVS after the connection is stable. When enabled and available,
+   this candidate is tried before scanning; a failed quick reconnect clears it and falls back
+   to normal candidate selection.
 
  */
+bool validWiFiSSID(const String& ssid) {
+  // Can be any char upto 32 characters not being a null-char.
+  // Some implementations, like Cisco, suggest some invalid characters:
+  // - '+'
+  // - ']'
+  // - '/'
+  // - '*'
+  // - TAB
+  // - Trailing spaces
+  // And the first character cannot contain:
+  // - '!'
+  // - '#'
+  // - ';'
+  // Source: https://community.cisco.com/t5/networking-knowledge-base/characteristics-of-ssids/ta-p/3131765
+  //
+  // However this seems to be Cisco specific and not a limitation of the standard
+  if (ssid.length() > 32) { return false; }
+
+  // "ssid" is an internal ESPEasy limitation, to signal an 'unset' value.
+  return !ssid.isEmpty() && !ssid.equalsIgnoreCase(F("ssid"));
+}
+
+bool validWiFiCredentials(const String& ssid, const String& pass) {
+  if (!validWiFiSSID(ssid)) { return false; }
+  const auto pass_length = pass.length();
+  return (pass_length >= 8 && pass_length <= 63)
+         || pass_length == 0; // Empty password is possible
+}
 
 // ********************************************************************************
 // Check WiFi connected status
@@ -110,19 +130,18 @@ namespace wifi {
 // ********************************************************************************
 bool WiFiConnected() {
   if (!Settings.getNetworkEnabled(NETWORK_INDEX_WIFI_STA)) { return false; }
+/*
+  // FIXME TD-er: Do we need to call loop() here? See: https://github.com/letscontrolit/ESPEasy/issues/5665
   static uint32_t lastCheckedTime = 0;
 
-  const int32_t timePassed = timePassedSince(lastCheckedTime);
-
-  if (lastCheckedTime != 0) {
-    if (timePassed < 10) {
-      // Rate limit time spent in WiFiConnected() to max. 100x per sec to process the rest of this function
-      return ESPEasyWiFi.connected();
-    }
-    lastCheckedTime = millis();
+  if ((lastCheckedTime != 0) && (timePassedSince(lastCheckedTime) < 10)) {
+    // Rate limit time spent in WiFiConnected() to max. 100x per sec to process the rest of this function
+    return ESPEasyWiFi.connected();
   }
-
+  lastCheckedTime = millis();
   ESPEasyWiFi.loop();
+  
+*/
   return ESPEasyWiFi.connected();
 }
 
@@ -158,15 +177,18 @@ void resetWiFi() {
    */
 }
 
-void initWiFi() { ESPEasyWiFi.setup(); }
+void initWiFi()               { ESPEasyWiFi.setup(); }
 
-void exitWiFi() { ESPEasyWiFi.disable(); }
-
-void loopWiFi() { ESPEasyWiFi.loop(); }
-
-bool shouldStartAP_fallback() { 
-  return ESPEasyWiFi.shouldStartAP_fallback(); 
+void exitWiFi()               { 
+  ESPEasyWiFi.disable(); 
+  WiFi_AP_Candidates.force_reload();
 }
+
+void loopWiFi()               { ESPEasyWiFi.loop(); }
+
+bool shouldStartAP_fallback() { return ESPEasyWiFi.shouldStartAP_fallback(); }
+
+bool shouldRedirectTo_setup() { return ESPEasyWiFi.shouldRedirectTo_setup(); }
 
 # ifdef BOARD_HAS_SDIO_ESP_HOSTED
 
@@ -225,13 +247,14 @@ String GetHostedFwVersion(EspHostTypes hostType)
 String GetHostedMCU()
 {
   // Function is not yet implemented in Arduino Core so emulate it here
-#if defined(CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6) && CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6==1
+#  if defined(CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6) && CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6 == 1
   return String("ESP32-C6");
-#else
+#  else
+
   if (equals(F(CONFIG_ESP_HOSTED_IDF_SLAVE_TARGET), F("esp32c6"))) {
     return String("ESP32-C6");
   }
-#endif
+#  endif // if defined(CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6) && CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6 == 1
   return String("Unknown");
 }
 
@@ -309,9 +332,9 @@ bool write_WiFi_Hosted_MCU_pins(KeyValueWriter*writer)
           writer->write(kv);
         } else {
           KeyValueStruct freq(F("SDIO Freq"), psdio_config->clock_freq_khz / 1000);
-#if FEATURE_TASKVALUE_UNIT_OF_MEASURE
+#  if FEATURE_TASKVALUE_UNIT_OF_MEASURE
           freq.setUnit(UOM_MHz);
-#endif
+#  endif
           writer->write(freq);
           writer->write({ F("SDIO D0"), psdio_config->pin_d0.pin });
           writer->write({ F("SDIO D1"), psdio_config->pin_d1.pin });
@@ -320,9 +343,10 @@ bool write_WiFi_Hosted_MCU_pins(KeyValueWriter*writer)
           writer->write({ F("SDIO CLK"), psdio_config->pin_clk.pin });
           writer->write({ F("SDIO CMD"), psdio_config->pin_cmd.pin });
           writer->write({ F("SDIO RST"), psdio_config->pin_reset.pin });
+
           // Hide TX/RX queue size for now as it is unclear what these mean
-          //writer->write({ F("SDIO TX queue"), psdio_config->tx_queue_size });
-          //writer->write({ F("SDIO RX queue"), psdio_config->rx_queue_size });
+          // writer->write({ F("SDIO TX queue"), psdio_config->tx_queue_size });
+          // writer->write({ F("SDIO RX queue"), psdio_config->rx_queue_size });
         }
         return true;
       }
@@ -345,6 +369,12 @@ bool write_WiFi_Hosted_MCU_info(KeyValueWriter*writer)
   } else {
     writer->write({ F("ESP-Host Fw Version"), GetHostedFwVersion(EspHostTypes::ESP_HOST) });
     writer->write({ F("ESP-Hosted-MCU Fw Version"), GetHostedFwVersion(EspHostTypes::ESP_HOSTED) });
+    if (GetHostedMCUFwVersion() < MIN_REQUIRED_ESP_HOSTED_FW) {
+      writer->writeNote(F("ESP-Hosted-MCU firmware is too old, run <tt>wifiotahostedmcu</tt> via ESPEasy console"));
+    } else if (hostedHasUpdate()) {
+      writer->writeNote(F("ESP-Hosted-MCU firmware update available, run <tt>wifiotahostedmcu</tt> via ESPEasy console"));
+    }
+
     writer->write({ F("ESP-Hosted-MCU Chip"), GetHostedMCU() });
     writer->write({
             F("MAC"),
@@ -429,7 +459,7 @@ void WiFiScan_log_to_serial()
     setWifiMode(cur_wifimode);
   }
 
-  const int8_t scanCompleteStatus = WiFi_AP_Candidates.scanComplete();
+  const int scanCompleteStatus = WiFi_AP_Candidates.scanComplete();
 
   if (scanCompleteStatus <= 0) {
     serialPrintln(concat(F("WIFI : No networks found. Status: "), scanCompleteStatus));
@@ -471,35 +501,18 @@ bool wifiAPmodeActivelyUsed()
     // AP not active or soon to be disabled in processDisableAPmode()
     return false;
   }
+#ifdef BOARD_HAS_SDIO_ESP_HOSTED
+  if (GetHostedMCUFwVersion() < MIN_REQUIRED_ESP_HOSTED_FW) {
+    // Hosted fw is too old, function below is not yet implemented
+    // When calling that function the ESP32-P4 will crash.
+    return false;
+  }
+#endif
+
   return SOFTAP_STATION_COUNT != 0;
 
   // FIXME TD-er: is effectively checking for AP active enough or must really check for connected clients to prevent automatic wifi
   // reconnect?
-}
-
-void setupStaticIPconfig() {
-  setUseStaticIP(WiFiUseStaticIP());
-
-  if (!WiFiUseStaticIP()) { return; }
-  const IPAddress ip(Settings.IP);
-  const IPAddress gw(Settings.Gateway);
-  const IPAddress subnet(Settings.Subnet);
-  const IPAddress dns(Settings.DNS);
-
-  //  WiFiEventData.dns0_cache = dns;
-
-  WiFi.config(ip, gw, subnet, dns);
-# ifndef BUILD_NO_DEBUG
-
-  if (loglevelActiveFor(LOG_LEVEL_INFO)) {
-    addLogMove(LOG_LEVEL_INFO, strformat(
-                 F("IP   : Static IP : %s GW: %s SN: %s DNS: %s"),
-                 formatIP(ip).c_str(),
-                 formatIP(gw).c_str(),
-                 formatIP(subnet).c_str(),
-                 getValue(LabelType::DNS).c_str()));
-  }
-# endif // ifndef BUILD_NO_DEBUG
 }
 
 // ********************************************************************************
@@ -519,7 +532,7 @@ String formatScanResult(int i, const String& separator, int32_t& rssi) {
 }
 
 void logConnectionStatus() {
-  static unsigned long lastLog = 0;
+  static uint32_t lastLog = 0;
 
   if ((lastLog != 0) && (timePassedSince(lastLog) < 1000)) {
     return;

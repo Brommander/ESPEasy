@@ -5,6 +5,7 @@
 # include "../ESPEasyNetwork.h"
 
 # include "../../../src/Helpers/StringConverter.h"
+# include "../../../src/Helpers/Networking.h"
 # include "../../../src/Globals/Settings.h"
 
 # include "../Globals/NetworkState.h"
@@ -91,16 +92,21 @@ bool NWPluginData_static_runtime::hasIPv6() const
 void NWPluginData_static_runtime::mark_start()
 {
   //  if (!_startStopStats.setOn()) { return; }
-  _startStopStats.setOn();
 
   if (!_netif) { return; }
+  _startStopStats.setOn();
 
-  const String hostname = strformat(
-    F("%s-%s"),
-    NetworkCreateRFCCompliantHostname().c_str(), 
-    _eventInterfaceName.c_str());
+  // FIXME TD-er: Should we always create a hostname with "-WiFi" or "-eth" etc.? Or add a setting for this?
+  if (Settings.getAppendNetworkAdapterNameToHostname(_networkIndex)) {
+    const String hostname = strformat(
+      F("%s-%s"),
+      NetworkCreateRFCCompliantHostname().c_str(), 
+      _eventInterfaceName.c_str());
 
-  _netif->setHostname(hostname.c_str());
+    _netif->setHostname(hostname.c_str());
+  } else {
+    _netif->setHostname(NetworkCreateRFCCompliantHostname().c_str());
+  }
 # if FEATURE_USE_IPV6
   _netif->enableIPv6(_enableIPv6);
 # endif
@@ -147,11 +153,10 @@ void NWPluginData_static_runtime::mark_got_IP()
 
   for (size_t i = 0; i < NR_ELEMENTS(_dns_cache); ++i) {
     auto tmp = _netif->dnsIP(i);
-
     _dns_cache[i] = tmp; // Also set the 'empty' ones so we won't set left-over DNS server from when another interface was active.
 # if NW_PLUGIN_LOG_EVENTS
 
-    if ((tmp != INADDR_NONE) && loglevelActiveFor(LOG_LEVEL_INFO)) {
+    if (valid_DNS_address(tmp) && loglevelActiveFor(LOG_LEVEL_INFO)) {
       addLog(LOG_LEVEL_INFO, strformat(
                F("%s: DNS Cache %d set to %s"),
                _eventInterfaceName.c_str(),
@@ -218,6 +223,20 @@ void NWPluginData_static_runtime::mark_begin_establish_connection()
   _establishConnectStats.forceSet(true);
   _connectedStats.setOff();
   _operationalStats.setOff();
+
+  // Configure the STA immediately before connecting, rather than relying on
+  // the STA_START event to apply the IP settings.
+  if (!_isAP && _netif) {
+    if (_useStaticIP) {
+      _netif->config(
+        _ip,
+        _gateway,
+        _sn,
+        _dns);
+    } else {
+      _netif->config((uint32_t)0, (uint32_t)0, (uint32_t)0);
+    }
+  }
 # if FEATURE_USE_IPV6
 
   if (_netif) {
@@ -227,9 +246,7 @@ void NWPluginData_static_runtime::mark_begin_establish_connection()
     _enableIPv6 = false;
   }
 # endif // if FEATURE_USE_IPV6
-# ifdef ESP32
   _routePrio = Settings.getRoutePrio_for_network(_networkIndex);
-# endif
 }
 
 void NWPluginData_static_runtime::mark_connected()

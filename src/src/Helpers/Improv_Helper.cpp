@@ -71,11 +71,15 @@ void Improv_Helper_t::init()
   // FIXME TD-er: Implement callback to use ESPEasy functions to connect to WiFi
 //  _improv.setCustomTryConnectToWiFi(OnImprovESPEasyConnectWiFi);
 
+  update();
+}
+
+void Improv_Helper_t::update()
+{
   String firmwareName      = get_binary_filename();
   const String buildString = getSystemBuildString();
-
-  firmwareName.replace(F("ESP_Easy_mega_"), F(""));
-  firmwareName.replace(buildString,         F(""));
+  remove(firmwareName, F("ESP_Easy_mega_"));
+  remove(firmwareName, buildString);
   firmwareName.replace('_',                 ' ');
 
   // Remove chip variant from the name
@@ -85,7 +89,7 @@ void Improv_Helper_t::init()
     const int endpos = firmwareName.indexOf(' ', pos);
 
     if (endpos != -1) {
-      firmwareName.replace(firmwareName.substring(pos, endpos), F(""));
+      remove(firmwareName, firmwareName.substring(pos, endpos));
     }
   }
   firmwareName.replace(F("  "), F(" "));

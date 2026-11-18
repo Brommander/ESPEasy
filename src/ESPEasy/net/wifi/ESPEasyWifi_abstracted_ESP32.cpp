@@ -47,10 +47,16 @@ bool WiFi_pre_STA_setup()
 void doWiFiDisconnect() {
   uint8_t retry = 3;
 
-  while (!WiFi.disconnect(Settings.WiFiRestart_connection_lost()) && retry) {
+  while (WiFi.isConnected() && !WiFi.disconnect() && retry) {
     --retry;
     delay(100);
   }
+  #  ifdef BOARD_HAS_SDIO_ESP_HOSTED
+  const bool wifioff = true;
+  #  else
+  const bool wifioff = Settings.WiFiRestart_connection_lost();
+  #  endif // ifdef BOARD_HAS_SDIO_ESP_HOSTED
+  if (wifioff) doSetSTA(false);
 
   /*
      {
@@ -67,38 +73,8 @@ bool doWifiIsAP(WiFiMode_t wifimode)  { return (wifimode == WIFI_MODE_AP) || (wi
 
 bool doWifiIsSTA(WiFiMode_t wifimode) { return (wifimode == WIFI_MODE_STA) || (wifimode == WIFI_MODE_APSTA); }
 
-bool doSetWifiMode(WiFiMode_t new_mode)
+static bool doSetWifiMode_internal(WiFiMode_t cur_mode, WiFiMode_t new_mode)
 {
-  if (!Settings.getNetworkEnabled(NETWORK_INDEX_WIFI_AP)) {
-    if (new_mode == WIFI_MODE_AP) { new_mode = WIFI_OFF; }
-
-    if (new_mode == WIFI_MODE_APSTA) { new_mode = WIFI_MODE_STA; }
-  }
-
-  if (!Settings.getNetworkEnabled(NETWORK_INDEX_WIFI_STA)) {
-    if (new_mode == WIFI_MODE_STA) { new_mode = WIFI_OFF; }
-
-    if (new_mode == WIFI_MODE_APSTA) { new_mode = WIFI_MODE_AP; }
-  }
-
-  const WiFiMode_t cur_mode = WiFi.getMode();
-
-  // Made this static flag an int as ESP8266 and ESP32 differ in the "not set" values
-  static int8_t processing_wifi_mode = -1;
-
-  if (cur_mode == new_mode) {
-    if (cur_mode != WIFI_OFF) {
-      //      registerWiFiEventHandler();
-    }
-    return true;
-  }
-
-  if (processing_wifi_mode == static_cast<int8_t>(new_mode)) {
-    // Prevent loops
-    return true;
-  }
-  processing_wifi_mode = static_cast<int8_t>(new_mode);
-
 
   if (cur_mode == WIFI_OFF) {
     // Needs to be set while WiFi is off
@@ -200,14 +176,14 @@ bool doSetWifiMode(WiFiMode_t new_mode)
 
     if (doWifiIsSTA(new_mode)) {
       //      WiFi.setAutoConnect(Settings.SDK_WiFi_autoreconnect());
-      WiFi.setAutoReconnect(Settings.SDK_WiFi_autoreconnect());
+      WiFi.setAutoReconnect(false);
     }
     delay(100); // Must allow for some time to init.
   }
   const bool new_mode_AP_enabled =  doWifiIsAP(new_mode);
 
   if (doWifiIsAP(cur_mode) && !new_mode_AP_enabled) {
-    eventQueue.add(F("WiFi#APmodeDisabled"));
+    eventQueue.addDeDup(F("WiFi#APmodeDisabled"));
   }
 
   if (doWifiIsAP(cur_mode) != new_mode_AP_enabled) {
@@ -222,6 +198,35 @@ bool doSetWifiMode(WiFiMode_t new_mode)
     }
   }
   return true;
+}
+
+bool doSetWifiMode(WiFiMode_t new_mode)
+{
+  if (!Settings.getNetworkEnabled(NETWORK_INDEX_WIFI_AP)) {
+    if (new_mode == WIFI_MODE_AP) { new_mode = WIFI_OFF; }
+
+    if (new_mode == WIFI_MODE_APSTA) { new_mode = WIFI_MODE_STA; }
+  }
+
+  if (!Settings.getNetworkEnabled(NETWORK_INDEX_WIFI_STA)) {
+    if (new_mode == WIFI_MODE_STA) { new_mode = WIFI_OFF; }
+
+    if (new_mode == WIFI_MODE_APSTA) { new_mode = WIFI_MODE_AP; }
+  }
+
+
+  const WiFiMode_t cur_mode = WiFi.getMode();
+  if (cur_mode == new_mode) { return true; }
+
+  static bool processing_wifi_mode = false;
+  if (processing_wifi_mode) {
+    // Called again from within this function (e.g. via the scheduler or an event)
+    return true;
+  }
+  processing_wifi_mode = true;
+  const bool res = doSetWifiMode_internal(cur_mode, new_mode); // current body
+  processing_wifi_mode = false;
+  return res;
 }
 
 void doWifiScan(bool async, uint8_t channel) {
@@ -288,7 +293,7 @@ void doWifiScan(bool async, uint8_t channel) {
 #  else // if CONFIG_SOC_WIFI_SUPPORT_5G
     WiFi.setScanTimeout(14 * max_ms_per_chan * 2);
 #  endif // if CONFIG_SOC_WIFI_SUPPORT_5G
-    WiFi.scanNetworks(async, show_hidden, passive, max_ms_per_chan /*, channel */);
+    WiFi.scanNetworks(async, show_hidden, passive, max_ms_per_chan , channel);
 
     if (!async) {
       FeedSW_watchdog();
@@ -396,13 +401,40 @@ WiFiConnectionProtocol doGetConnectionProtocol()
 
 void doSetWiFiTXpower(float& dBm)
 {
-  int8_t power = dBm * 4;
+  if (WiFi.STA.started() || WiFi.AP.started()) {
+    constexpr wifi_power_t options[] = {
+      WIFI_POWER_21dBm,
+      WIFI_POWER_20_5dBm,
+      WIFI_POWER_20dBm,
+      WIFI_POWER_19_5dBm,
+      WIFI_POWER_19dBm,
+      WIFI_POWER_18_5dBm,
+      WIFI_POWER_17dBm,
+      WIFI_POWER_15dBm,
+      WIFI_POWER_13dBm,
+      WIFI_POWER_11dBm,
+      WIFI_POWER_8_5dBm,
+      WIFI_POWER_7dBm,
+      WIFI_POWER_5dBm,
+      WIFI_POWER_2dBm,
+      WIFI_POWER_MINUS_1dBm
+    };
 
-  esp_wifi_set_max_tx_power(power);
+    int8_t power = std::min(static_cast<int>(dBm * 4), static_cast<int>(options[0]));
 
-  if (esp_wifi_get_max_tx_power(&power) == ESP_OK)  {
-    dBm = static_cast<float>(power) / 4.0f;
+    for (size_t i = 0; i < NR_ELEMENTS(options); ++i) {
+      if (power >= options[i]) {
+        power = options[i];
+        esp_wifi_set_max_tx_power(power);
+
+        if (esp_wifi_get_max_tx_power(&power) == ESP_OK)  {
+          dBm = static_cast<float>(power) / 4.0f;
+        }
+        return;
+      }
+    }
   }
+  dBm = 0;
 }
 
 float doGetWiFiTXpower()
@@ -578,7 +610,7 @@ void doSetConnectionSpeed(bool ForceWiFi_bg_mode)
     #   if CONFIG_SOC_WIFI_SUPPORT_5G
     setProtocol(WIFI_IF_AP,  protocol, protocol_5GHz);
     #   else
-    setProtocol(WIFI_IF_STA, protocol);
+    setProtocol(WIFI_IF_AP, protocol);
     #   endif // if CONFIG_SOC_WIFI_SUPPORT_5G
   }
   #  endif // ifndef SOC_WIFI_SUPPORTED

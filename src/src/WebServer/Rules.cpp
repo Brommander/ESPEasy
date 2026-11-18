@@ -16,9 +16,29 @@
 
 #include "../Globals/Settings.h"
 #include "../Helpers/ESPEasy_Storage.h"
+#include "../Helpers/Numerical.h"
 #include "../Helpers/StringConverter.h"
 
 #include <FS.h>
+
+static void Rule_showRuleTextArea(const String& fileName) {
+  // Read rules from file and stream directly into the textarea
+
+  size_t size = 0;
+
+  addHtml(F("<textarea id='rules' name='rules' rows='30' wrap='off'>"));
+  size = streamFromFS(fileName, true);
+  addHtml(F("</textarea>"));
+  #if FEATURE_RULES_EASY_COLOR_CODE
+  html_add_script(F("initCM();"), false);
+  #endif
+
+  html_TR_TD();
+  addHtml(F("Current size: <span id='size'>"));
+  addHtmlInt(size);
+  addHtml(F("</span> characters"));
+}
+
 
 // ********************************************************************************
 // Web Interface rules page
@@ -55,8 +75,8 @@ void handle_rules() {
     if (f) { f.close(); }
   }
 
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  // Already checked for login
+  startStream_send_stdTemplate_NoLoginCheck(MENU_INDEX_RULES);
   addHtmlError(error);
 
   html_table_class_normal();
@@ -104,11 +124,75 @@ void handle_rules() {
   addButton(fileName, F("Download to file"));
   html_end_table();
 
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
 
   checkRuleSets();
 }
+
+# ifdef WEBSERVER_NEW_RULES
+static bool EnumerateFileAndDirectory(String          & rootPath
+                               , int             skip
+                               , HandlerFileInfo handler)
+{
+  bool hasMore = false;
+  int  count   = 0;
+  bool next    = true;
+
+  # ifdef ESP8266
+  fs::Dir dir = ESPEASY_FS.openDir(rootPath);
+  ESPEASY_SERIAL_0.print(F("Enumerate files of "));
+  ESPEASY_SERIAL_0.println(rootPath);
+
+  while (next && dir.next()) {
+    // Skip files
+    if (count++ < skip) {
+      continue;
+    }
+
+    // Workaround for skipped unwanted files
+    if (!dir.fileName().startsWith(rootPath + "/")) {
+      continue;
+    }
+    fileInfo fi;
+    fi.Name = dir.fileName() /*.substring(rootPath.length())*/;
+    fs::File f = dir.openFile("r");
+    fi.Size = f.size();
+    f.close();
+    next = handler(fi);
+  }
+  hasMore = dir.next();
+  # endif // ifdef ESP8266
+  # ifdef ESP32
+  fs::File root = ESPEASY_FS.open(rootPath);
+
+  if (root)
+  {
+    fs::File file = root.openNextFile();
+
+    while (next && file) {
+      if (count >= skip) {
+        fileInfo fi;
+        fi.Name        = file.name();
+        fi.Size        = file.size();
+        fi.isDirectory = file.isDirectory();
+        next           = handler(fi);
+      }
+
+      if (!file.isDirectory()) {
+        ++count;
+      }
+      file = root.openNextFile();
+    }
+    hasMore = file;
+  }
+  else
+  {
+    addLog(LOG_LEVEL_ERROR, F("Invalid root."));
+  }
+  # endif // ifdef ESP32
+  return hasMore;
+}
+#endif
 
 // ********************************************************************************
 // Web Interface rules page  (NEW)
@@ -127,10 +211,8 @@ void handle_rules_new() {
   #  ifndef BUILD_NO_RAM_TRACKER
   checkRAM(F("handle_rules"));
   #  endif // ifndef BUILD_NO_RAM_TRACKER
-  navMenuIndex = 5;
-  TXBuffer.startStream();
-  sendHeadandTail(F("TmplStd"), _HEAD);
-
+  if (!startStream_send_stdTemplate(MENU_INDEX_RULES)) { return; }
+  
   // define macro
   #  if defined(ESP8266)
   String rootPath = F("rules");
@@ -254,12 +336,38 @@ void handle_rules_new() {
   }
 
   // TXBuffer += F("<BR><BR>");
-  sendHeadandTail(F("TmplStd"), _TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
   #  ifndef BUILD_NO_RAM_TRACKER
   checkRAM(F("handle_rules"));
   #  endif // ifndef BUILD_NO_RAM_TRACKER
   # endif  // WEBSERVER_NEW_RULES
+}
+
+# ifdef WEBSERVER_NEW_RULES
+static bool Rule_Download(const String& path)
+{
+  # ifdef WEBSERVER_RULES_DEBUG
+  ESPEASY_SERIAL_0.print(F("Rule_Download path: "));
+  ESPEASY_SERIAL_0.println(path);
+  # endif // ifdef WEBSERVER_RULES_DEBUG
+  fs::File dataFile = tryOpenFile(path, "r");
+
+  if (!dataFile)
+  {
+    addLog(LOG_LEVEL_ERROR, concat(F("Invalid path: "), path));
+    return false;
+  }
+  String filename = concat(path, F(".txt"));
+  filename.replace(RULE_FILE_SEPARAROR, '_');
+  String str = concat(F("attachment; filename="), filename);
+  sendHeader(F("Content-Disposition"), str);
+  sendHeader(F("Cache-Control"),       F("public,max-age=3600"));
+  sendHeader(F("Vary"),                "*");
+  sendHeader(F("ETag"),                F("\"2.0.0\""));
+
+  web_server.streamFile(dataFile, F("application/octet-stream"));
+  dataFile.close();
+  return true;
 }
 
 void handle_rules_backup() {
@@ -372,13 +480,9 @@ void handle_rules_delete() {
   #  endif // ifndef BUILD_NO_RAM_TRACKER
   # endif  // WEBSERVER_NEW_RULES
 }
+#endif
 
-bool handle_rules_edit(const String& originalUri)
-{
-  return handle_rules_edit(originalUri, false);
-}
-
-bool handle_rules_edit(String originalUri, bool isAddNew) {
+static bool handle_rules_edit(String originalUri, bool isAddNew) {
   // originalUri is passed via deepcopy, since it will be converted to lower case.
   originalUri.toLowerCase();
   # ifndef BUILD_NO_RAM_TRACKER
@@ -465,7 +569,7 @@ bool handle_rules_edit(String originalUri, bool isAddNew) {
 
         if (f)
         {
-          addLog(LOG_LEVEL_INFO, String(F(" Write to file: ")) + fileName);
+          addLog(LOG_LEVEL_INFO, concat(F(" Write to file: "), fileName));
           f.print(rules);
           f.close();
         }
@@ -477,9 +581,7 @@ bool handle_rules_edit(String originalUri, bool isAddNew) {
         }
       }
     }
-    navMenuIndex = 5;
-    TXBuffer.startStream();
-    sendHeadandTail(F("TmplStd"));
+    startStream_send_stdTemplate_NoLoginCheck(MENU_INDEX_RULES);
 
     if (error.length() > 0) {
       addHtmlError(error);
@@ -529,8 +631,7 @@ bool handle_rules_edit(String originalUri, bool isAddNew) {
 
     addHtml(F("</table></form>"));
 
-    sendHeadandTail(F("TmplStd"), true);
-    TXBuffer.endStream();
+    sendTail_stdtemplate();
     # endif // WEBSERVER_NEW_RULES
   }
   # ifndef BUILD_NO_RAM_TRACKER
@@ -539,116 +640,24 @@ bool handle_rules_edit(String originalUri, bool isAddNew) {
   return handle;
 }
 
-void Rule_showRuleTextArea(const String& fileName) {
-  // Read rules from file and stream directly into the textarea
-
-  size_t size = 0;
-
-  addHtml(F("<textarea id='rules' name='rules' rows='30' wrap='off'>"));
-  size = streamFromFS(fileName, true);
-  addHtml(F("</textarea>"));
-  #if FEATURE_RULES_EASY_COLOR_CODE
-  html_add_script(F("initCM();"), false);
-  #endif
-
-  html_TR_TD();
-  addHtml(F("Current size: <span id='size'>"));
-  addHtmlInt(size);
-  addHtml(F("</span> characters"));
-}
-
-bool Rule_Download(const String& path)
+bool handle_rules_edit(const String& originalUri)
 {
-  # ifdef WEBSERVER_RULES_DEBUG
-  ESPEASY_SERIAL_0.print(F("Rule_Download path: "));
-  ESPEASY_SERIAL_0.println(path);
-  # endif // ifdef WEBSERVER_RULES_DEBUG
-  fs::File dataFile = tryOpenFile(path, "r");
-
-  if (!dataFile)
-  {
-    addLog(LOG_LEVEL_ERROR, concat(F("Invalid path: "), path));
-    return false;
-  }
-  String filename = concat(path, F(".txt"));
-  filename.replace(RULE_FILE_SEPARAROR, '_');
-  String str = concat(F("attachment; filename="), filename);
-  sendHeader(F("Content-Disposition"), str);
-  sendHeader(F("Cache-Control"),       F("public,max-age=3600"));
-  sendHeader(F("Vary"),                "*");
-  sendHeader(F("ETag"),                F("\"2.0.0\""));
-
-  web_server.streamFile(dataFile, F("application/octet-stream"));
-  dataFile.close();
-  return true;
+  return handle_rules_edit(originalUri, false);
 }
+
+# ifdef WEBSERVER_NEW_RULES
+void handle_rules_add()
+{
+  handle_rules_edit(web_server.uri(), true);
+}
+
+# endif // ifdef WEBSERVER_NEW_RULES
 
 void Goto_Rules_Root() {
   sendHeader(F("Location"), F("/rules"), true);
   web_server.send(302, F("text/plain"), EMPTY_STRING);
 }
 
-bool EnumerateFileAndDirectory(String          & rootPath
-                               , int             skip
-                               , HandlerFileInfo handler)
-{
-  bool hasMore = false;
-  int  count   = 0;
-  bool next    = true;
 
-  # ifdef ESP8266
-  fs::Dir dir = ESPEASY_FS.openDir(rootPath);
-  ESPEASY_SERIAL_0.print(F("Enumerate files of "));
-  ESPEASY_SERIAL_0.println(rootPath);
-
-  while (next && dir.next()) {
-    // Skip files
-    if (count++ < skip) {
-      continue;
-    }
-
-    // Workaround for skipped unwanted files
-    if (!dir.fileName().startsWith(rootPath + "/")) {
-      continue;
-    }
-    fileInfo fi;
-    fi.Name = dir.fileName() /*.substring(rootPath.length())*/;
-    fs::File f = dir.openFile("r");
-    fi.Size = f.size();
-    f.close();
-    next = handler(fi);
-  }
-  hasMore = dir.next();
-  # endif // ifdef ESP8266
-  # ifdef ESP32
-  fs::File root = ESPEASY_FS.open(rootPath);
-
-  if (root)
-  {
-    fs::File file = root.openNextFile();
-
-    while (next && file) {
-      if (count >= skip) {
-        fileInfo fi;
-        fi.Name        = file.name();
-        fi.Size        = file.size();
-        fi.isDirectory = file.isDirectory();
-        next           = handler(fi);
-      }
-
-      if (!file.isDirectory()) {
-        ++count;
-      }
-      file = root.openNextFile();
-    }
-    hasMore = file;
-  }
-  else
-  {
-    addLog(LOG_LEVEL_ERROR, F("Invalid root."));
-  }
-  # endif // ifdef ESP32
-  return hasMore;
-}
 
 #endif // ifdef WEBSERVER_RULES

@@ -25,15 +25,11 @@
 uploadResult_e uploadResult = uploadResult_e::UploadStarted;
 
 void handle_upload() {
-  if (!isLoggedIn()) { return; }
-  navMenuIndex = MENU_INDEX_TOOLS;
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  if (!startStream_send_stdTemplate(MENU_INDEX_TOOLS)) { return; }
 
   addHtml(F(
             "<form enctype='multipart/form-data' method='post'><p>Upload settings file:<br><input type='file' name='datafile' size='40'></p><div><input class='button link' type='submit' value='Upload'></div><input type='hidden' name='edit' value='1'></form>"));
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
   free_string(printWebString);
   printToWeb     = false;
 }
@@ -46,11 +42,7 @@ void handle_upload_post() {
   checkRAM(F("handle_upload_post"));
   # endif // ifndef BUILD_NO_RAM_TRACKER
 
-  if (!isLoggedIn()) { return; }
-
-  navMenuIndex = MENU_INDEX_TOOLS;
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  if (!startStream_send_stdTemplate(MENU_INDEX_TOOLS)) { return; }
 
   switch (uploadResult) {
     case uploadResult_e::Success:
@@ -84,8 +76,7 @@ void handle_upload_post() {
   }
 
   addHtml(F("Upload finished"));
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
   free_string(printWebString);
   printToWeb     = false;
 }
@@ -116,24 +107,8 @@ fs::File uploadFile;
 # if FEATURE_TARSTREAM_SUPPORT
 TarStream *tarStream = nullptr;
 # endif // if FEATURE_TARSTREAM_SUPPORT
-void handleFileUpload() {
-  # ifndef BUILD_NO_RAM_TRACKER
-  checkRAM(F("handleFileUpload"));
-  # endif // ifndef BUILD_NO_RAM_TRACKER
-  handleFileUploadBase(false);
-}
 
-# if FEATURE_SD
-void handleSDFileUpload() {
-  #  ifndef BUILD_NO_RAM_TRACKER
-  checkRAM(F("handleSDFileUpload"));
-  #  endif // ifndef BUILD_NO_RAM_TRACKER
-  handleFileUploadBase(true);
-}
-
-# endif // if FEATURE_SD
-
-void handleFileUploadBase(bool toSDcard) {
+static void handleFileUploadBase(bool toSDcard) {
   if (!isLoggedIn()) { return; }
 
   static boolean valid                = false;
@@ -262,5 +237,24 @@ void handleFileUploadBase(bool toSDcard) {
     uploadResult = uploadResult_e::InvalidFile;
   }
 }
+
+void handleFileUpload() {
+  # ifndef BUILD_NO_RAM_TRACKER
+  checkRAM(F("handleFileUpload"));
+  # endif // ifndef BUILD_NO_RAM_TRACKER
+  handleFileUploadBase(false);
+}
+
+# if FEATURE_SD
+void handleSDFileUpload() {
+  #  ifndef BUILD_NO_RAM_TRACKER
+  checkRAM(F("handleSDFileUpload"));
+  #  endif // ifndef BUILD_NO_RAM_TRACKER
+  handleFileUploadBase(true);
+}
+
+# endif // if FEATURE_SD
+
+
 
 #endif // ifdef WEBSERVER_UPLOAD

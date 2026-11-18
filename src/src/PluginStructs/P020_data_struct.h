@@ -79,6 +79,7 @@ enum class P020_Events : uint8_t {
   Generic       = 1u,
   RFLink        = 2u,
   P1WiFiGateway = 3u,
+
 };
 
 # if P020_USE_PROTOCOL
@@ -86,7 +87,9 @@ enum class P020_Protocol_e : uint8_t {
   TCP     = 0u,
   UDP     = 1u,
   TCP_UDP = 2u,
+
 };
+
 # endif // if P020_USE_PROTOCOL
 
 struct P020_Task : public PluginTaskData_base {
@@ -94,6 +97,7 @@ struct P020_Task : public PluginTaskData_base {
     WAITING,
     READING,
     CHECKSUM
+
   };
 
   P020_Task(struct EventStruct *event);
@@ -113,14 +117,15 @@ struct P020_Task : public PluginTaskData_base {
   void               serialBegin(const ESPEasySerialPort port,
                                  int16_t                 rxPin,
                                  int16_t                 txPin,
-                                 unsigned long           baud,
+                                 uint32_t           baud,
                                  uint8_t                 config);
   void                serialEnd();
 
   void                handleSerialIn(struct EventStruct *event);
   void                handleClientIn(struct EventStruct *event);
   void                discardSerialIn();
-  void                rulesEngine(const String& message);
+  void                rulesEngine(const String      & message,
+                                  struct EventStruct *event);
 
   bool                isInit() const;
 
@@ -171,7 +176,7 @@ struct P020_Task : public PluginTaskData_base {
   taskIndex_t    _taskIndex        = INVALID_TASK_INDEX;
   bool           handleMultiLine   = false;
 
-  unsigned long _blinkLEDStartTime = 0;
+  uint32_t _blinkLEDStartTime = 0;
   int8_t        _ledPin            = -1;
   bool          _ledInverted       = false;
   bool          _ledEnabled        = false;
@@ -187,6 +192,7 @@ struct P020_Task : public PluginTaskData_base {
   bool          _eventAsHex        = false;
 
   ESPEasySerialPort _port;
+
 };
 
 #endif // ifdef USES_P020

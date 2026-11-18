@@ -18,14 +18,66 @@
 # include "../Helpers/SystemVariables.h"
 
 
+#if defined(ESP32) && (!defined(LIMIT_BUILD_SIZE) || FEATURE_STRING_VARIABLES)
+#define FEATURE_CUSTOM_STRING_SORT  1
+#else
+#define FEATURE_CUSTOM_STRING_SORT  0
+#endif
 // ********************************************************************************
 // Web Interface sysvars showing all system vars and their value.
 // ********************************************************************************
-void addSysVar_enum_html(SystemVariables::Enum enumval) {
+static void addSysVar_html(String input, bool isSpecialChar) {
+  // Make deepcopy for replacement, so parameter is a copy, not a const reference
+
+  html_TR_TD();
+  addHtml_pre(input);
+  
+  if (isSpecialChar) {
+    parseSpecialCharacters(input, false);
+    html_TD();
+    addHtml(input);
+    html_TD();
+    addHtml(URLEncode(input));
+  } else {
+    const String orig_input(input);
+
+    for (int i = 0; i < 2; ++i) {
+      const bool URLencoded = i == 1;
+
+      if (URLencoded) {
+        input = orig_input;
+      }
+
+      parseSystemVariables(input, URLencoded);
+      parseStandardConversions(input, URLencoded);
+      # if FEATURE_STRING_VARIABLES
+      input = parseTemplate_padded(input, 0, URLencoded);
+      # endif // if FEATURE_STRING_VARIABLES
+
+      html_TD();
+      addHtml(input);
+    }
+  }
+  delay(0);
+}
+
+static void addSysVar_html(const __FlashStringHelper *input) {
+  addSysVar_html(String(input), false);
+}
+
+static void addSysVar_html_specialChar(const __FlashStringHelper *input) {
+  addSysVar_html(String(input), true);
+}
+
+static void addSysVar_html(const String& input) {
+  addSysVar_html(input, false);
+}
+
+static void addSysVar_enum_html(SystemVariables::Enum enumval) {
   addSysVar_html(SystemVariables::toString(enumval), false);
 }
 
-void addSysVar_enum_html(const SystemVariables::Enum enumval[], size_t nrElements) {
+static void addSysVar_enum_html(const SystemVariables::Enum enumval[], size_t nrElements) {
   for (size_t i = 0; i < nrElements; ++i) {
     addSysVar_enum_html(enumval[i]);
   }
@@ -36,9 +88,7 @@ void handle_sysvars() {
   checkRAM(F("handle_sysvars"));
   # endif // ifndef BUILD_NO_RAM_TRACKER
 
-  if (!isLoggedIn()) { return; }
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  if (!startStream_send_stdTemplate(MENU_INDEX_TOOLS)) { return; }
 
   html_BR();
   addHtml(F("<p>This page may load slow.<BR>Do not load too often, since it may affect performance of the node.</p>"));
@@ -52,6 +102,19 @@ void handle_sysvars() {
   html_table_header(F("URL encoded"), F("RTDReference/SystemVariable.html"), 0);
 
   addTableSeparator(F("Custom Variables"), 3, 3);
+  #if FEATURE_CUSTOM_STRING_SORT
+  auto numAlphaSort = [](const String& a, const String& b) {
+                        const int32_t ai = a.toInt();
+                        const int32_t bi = b.toInt();
+
+                        if (!ai && !bi) { return !!(a < b); } // a..z , need to cast to bool for ESP8266
+
+                        if (!ai) { return false; } // Alphanum after num
+                        return ai < bi;     // Numerical order
+                      };
+  std::vector<String> customStringSort;
+
+  # endif // FEATURE_CUSTOM_STRING_SORT
 
   if (customFloatVar.empty()) {
     html_TR_TD();
@@ -59,14 +122,33 @@ void handle_sysvars() {
     html_TD();
     html_TD();
   } else {
+    #if FEATURE_CUSTOM_STRING_SORT
+
+    for (auto it = customFloatVar.begin(); it != customFloatVar.end(); ++it) {
+      customStringSort.push_back(it->first);
+    }
+    std::sort(customStringSort.begin(), customStringSort.end(), numAlphaSort);
+
+    for (auto& it : customStringSort) {
+      NumericalType detectedType;
+      bool isv_ = true;
+
+      if (getNumerical(it, NumericalType::HexadecimalUInt, detectedType).length() > 0) {
+        isv_ = detectedType != NumericalType::Integer;
+      }
+      addSysVar_html(strformat(F("%%%s%s%%"), FsP(isv_ ? F("v_") : F("v")), it.c_str()), false);
+    }
+    # else // FEATURE_CUSTOM_STRING_SORT
     for (auto it = customFloatVar.begin(); it != customFloatVar.end(); ++it) {
       NumericalType detectedType;
       bool isv_ = true;
+
       if (getNumerical(it->first, NumericalType::HexadecimalUInt, detectedType).length() > 0) {
         isv_ = detectedType != NumericalType::Integer;
       }
       addSysVar_html(strformat(F("%%%s%s%%"), FsP(isv_ ? F("v_") : F("v")), it->first.c_str()), false);
     }
+    # endif // FEATURE_CUSTOM_STRING_SORT
   }
 
   # if FEATURE_STRING_VARIABLES
@@ -78,8 +160,15 @@ void handle_sysvars() {
     html_TD();
     html_TD();
   } else {
+    customStringSort.clear();
+
     for (auto it = customStringVar.begin(); it != customStringVar.end(); ++it) {
-      addSysVar_html(strformat(F("[str#%s]"), it->first.c_str()), false);
+      customStringSort.push_back(it->first);
+    }
+    std::sort(customStringSort.begin(), customStringSort.end(), numAlphaSort);
+
+    for (auto& it : customStringSort) {
+      addSysVar_html(strformat(F("[str#%s]"), it.c_str()), false);
     }
   }
   # endif // if FEATURE_STRING_VARIABLES
@@ -414,6 +503,8 @@ void handle_sysvars() {
       F("Degrees to radians: %c_d2r%(22)"),
       F("Radians to degrees: %c_r2d%(0.357)"),
       #endif // ifndef LIMIT_BUILD_SIZE
+      F("To 2's complement: %c_to2c%(-127,10)"),
+      F("From 2's complement: %c_fr2c%(255,8)"),
 
       F(""), // addFormSeparator(3,
       F("Mins to days: %c_m2day%(1900)"),
@@ -501,55 +592,9 @@ void handle_sysvars() {
   }
   html_end_table();
   html_end_form();
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
 }
 
-void addSysVar_html(const __FlashStringHelper *input) {
-  addSysVar_html(String(input), false);
-}
 
-void addSysVar_html_specialChar(const __FlashStringHelper *input) {
-  addSysVar_html(String(input), true);
-}
-
-void addSysVar_html(const String& input) {
-  addSysVar_html(input, false);
-}
-
-void addSysVar_html(String input, bool isSpecialChar) {
-  // Make deepcopy for replacement, so parameter is a copy, not a const reference
-
-  html_TR_TD();
-  addHtml_pre(input);
-  
-  if (isSpecialChar) {
-    parseSpecialCharacters(input, false);
-    html_TD();
-    addHtml(input);
-    html_TD();
-    addHtml(URLEncode(input));
-  } else {
-    const String orig_input(input);
-
-    for (int i = 0; i < 2; ++i) {
-      const bool URLencoded = i == 1;
-
-      if (URLencoded) {
-        input = orig_input;
-      }
-
-      parseSystemVariables(input, URLencoded);
-      parseStandardConversions(input, URLencoded);
-      # if FEATURE_STRING_VARIABLES
-      input = parseTemplate_padded(input, 0, URLencoded);
-      # endif // if FEATURE_STRING_VARIABLES
-
-      html_TD();
-      addHtml(input);
-    }
-  }
-  delay(0);
-}
 
 #endif // WEBSERVER_SYSVARS

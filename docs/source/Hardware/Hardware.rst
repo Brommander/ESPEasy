@@ -11,7 +11,7 @@ ESPEasy has some centralized hardware configuration settings, shown in this page
 Wifi Status LED
 ---------------
 
-To display the Wifi acitivity, a pin can be configured to light up a LED when data is transfered via Wifi. Optionally, the LED signal can be 'inverted'.
+To display the Wifi acitivity, a pin can be configured to light up a LED when data is transferred via Wifi. Optionally, the LED signal can be 'inverted'.
 
 As many ESP boards have an onboard LED connected to GPIO-2 and inverted, it is shown as a note how to configure that.
 
@@ -49,6 +49,32 @@ When multiple I2C Buses are configured (ESP32 only), we need some configuration 
 When using multiple PCF and/or MCP GPIO extenders, they must all be connected to this I2C Bus, and any Device Tasks should also use the same I2C Bus.
 
 NB: If only 1 I2C Bus is configured, this section isn't shown.
+
+--------------------
+External I2C EEPROM
+--------------------
+
+Added: 2026-08-19
+
+For persistently storing (numeric) values, an I2C EEPROM (AT24Cxx) or FRAM (MB85RCxx) module can be connected to the ESP, ranging in size from 4kB up to 256kB. This storage is made available as 'slots', where a single numeric value, of type ``double``, can be stored, and of course retrieved. Of each unit there is 128 bytes reserved for future (internal/housekeeping) use, and the remaining space is available for user-values.
+
+The used module, I2C address (also used as 'enable' setting) and the I2C bus where the module is connected (when multiple I2C buses are available & configured), can be configured.
+
+.. image:: Hardware_EEPROM.png
+
+Once setup, a reboot is required to validate the connection to the module, and also a write-protected check is done, as some units come with a write-protect pin, to inhibit writing to the device.
+
+When the module is enabled, the number of available slots is shown, and a warning if the module is write-protected.
+
+.. image:: Hardware_EEPROM_WP.png
+
+Saving a value in a slot is done with command ``WriteEE,<slot>,<value>``, and retrieving the value using the special variable ``[ReadEE#<slot>]``. The max. number of slots can be obtained via ``[ReadEE#max]`` and the write-protect status via ``[ReadEE#wp]`` (1 = write-protected).
+
+NB: ``<slot>`` is in the range 0 .. (Max.slots - 1) !
+
+All values can be erased from the module by using the command ``WriteEE,erase,erase``, and re-checking the write-protected status via ``WriteEE,check,wp``.
+
+See also :ref:`Command-Reference`
 
 
 -------

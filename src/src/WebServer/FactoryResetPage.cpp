@@ -17,6 +17,29 @@
 #include "../Helpers/ESPEasy_Storage.h"
 #include "../Helpers/Hardware.h"
 
+
+// ********************************************************************************
+// Create pre-defined config selector
+// ********************************************************************************
+#ifndef LIMIT_BUILD_SIZE
+static void addPreDefinedConfigSelector() {
+  DeviceModel active_model = ResetFactoryDefaultPreference.getDeviceModel();
+
+  addSelector_Head_reloadOnChange(F("fdm"));
+
+  for (uint8_t x = 0; x < static_cast<uint8_t>(DeviceModel::DeviceModel_MAX); ++x) {
+    DeviceModel model = static_cast<DeviceModel>(x);
+    if (modelMatchingFlashSize(model)) {
+      addSelector_Item(
+        getDeviceModelString(model),
+        x,
+        model == active_model);
+    }
+  }
+  addSelector_Foot(true);
+}
+#endif
+
 // ********************************************************************************
 // Web Interface Factory Reset
 // ********************************************************************************
@@ -25,10 +48,8 @@ void handle_factoryreset() {
   checkRAM(F("handle_factoryreset"));
   #endif
 
-  if (!isLoggedIn()) { return; }
-  navMenuIndex = MENU_INDEX_TOOLS;
-  TXBuffer.startStream();
-  sendHeadandTail_stdtemplate(_HEAD);
+  if (!startStream_send_stdTemplate(MENU_INDEX_TOOLS)) { return; }
+
   html_add_form();
   html_table_class_normal();
   html_TR();
@@ -109,29 +130,9 @@ void handle_factoryreset() {
 
   html_end_table();
   html_end_form();
-  sendHeadandTail_stdtemplate(_TAIL);
-  TXBuffer.endStream();
+  sendTail_stdtemplate();
 }
 
-// ********************************************************************************
-// Create pre-defined config selector
-// ********************************************************************************
-void addPreDefinedConfigSelector() {
-  DeviceModel active_model = ResetFactoryDefaultPreference.getDeviceModel();
-
-  addSelector_Head_reloadOnChange(F("fdm"));
-
-  for (uint8_t x = 0; x < static_cast<uint8_t>(DeviceModel::DeviceModel_MAX); ++x) {
-    DeviceModel model = static_cast<DeviceModel>(x);
-    if (modelMatchingFlashSize(model)) {
-      addSelector_Item(
-        getDeviceModelString(model),
-        x,
-        model == active_model);
-    }
-  }
-  addSelector_Foot(true);
-}
 
 #ifdef WEBSERVER_NEW_UI
 void handle_factoryreset_json() {

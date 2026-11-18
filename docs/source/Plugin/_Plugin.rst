@@ -325,13 +325,13 @@ There are different released versions of ESP Easy:
 
 :green:`NORMAL` is the regular set of plugins, this is the base set of plugins, and with all secondary features enabled, like I2C multiplexer, RTTTL, DEBUG logging, etc.
 
-:yellow:`COLLECTION` (split into sets A..x) with plugins that don't fit into the NORMAL builds. Because of space limitations, this collection is split into a number of sets. When only :yellow:`COLLECTION` is mentioned, the plugin is available in **all** :yellow:`COLLECTION` builds, though some exceptions may be applied. Also, some features are disabled to save space in the .bin files, like RTTTL, Servo, tooltips, and DEBUG-level logging.
+:yellow:`COLLECTION` (split into sets A..x) with plugins that don't all fit into the NORMAL builds, but including (nearly) everything from NORMAL. Because of space limitations, this collection is split into a number of sets. When only :yellow:`COLLECTION` is mentioned, the plugin is available in **all** :yellow:`COLLECTION` builds, though some exceptions may be applied. Also, some features are disabled to save space in the .bin files, like RTTTL, Servo, tooltips, and DEBUG-level logging.
 
 :red:`DEVELOPMENT` is used for plugins that are still being developed and are not considered stable at all. Currently there are no DEVELOPMENT builds available.
 
 :yellow:`ENERGY` :yellow:`DISPLAY` (split into sets A..B) :yellow:`IR` :yellow:`IRext` :yellow:`NEOPIXEL` :yellow:`CLIMATE` (split into sets A..B) are specialized builds holding all Energy-, Display-, Infra Red- (extended), NeoPixel- and Climate- related plugins.
 
-:yellow:`MAX` is the build that has all plugins that are available in the ESPEasy repository. Available for ESP32 16MB and ESP32 8MB Flash units (available for ESP32-Classic, ESP32-S3, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61 and ESP32-P4).
+:yellow:`MAX` is the build that has all plugins that are available in the ESPEasy repository. Available for ESP32 16MB, 8MB and 32MB Flash units (available for ESP32-Classic, ESP32-S3, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61 and ESP32-P4).
 
 :gray:`RETIRED` plugin has been retired and removed from ESPEasy.
 
@@ -492,6 +492,7 @@ There are different released versions of ESP Easy:
    ":ref:`P152_page`","|P152_status|","|P152_status_lb|","P152"
    ":ref:`P153_page`","|P153_status|","|P153_status_lb|","P153"
    ":ref:`P154_page`","|P154_status|","|P154_status_lb|","P154"
+   ":ref:`P157_page`","|P157_status|","|P157_status_lb|","P157"
    ":ref:`P159_page`","|P159_status|","|P159_status_lb|","P159"
    ":ref:`P162_page`","|P162_status|","|P162_status_lb|","P162"
    ":ref:`P163_page`","|P163_status|","|P163_status_lb|","P163"

@@ -709,7 +709,7 @@ void readBootCause() {
 /********************************************************************************************\
    Hardware specific configurations
  \*********************************************************************************************/
-const __FlashStringHelper* getDeviceModelBrandString(DeviceModel model) {
+static const __FlashStringHelper* getDeviceModelBrandString(DeviceModel model) {
   switch (model) {
     case DeviceModel::DeviceModel_Sonoff_Basic:
     case DeviceModel::DeviceModel_Sonoff_TH1x:
@@ -746,7 +746,7 @@ const __FlashStringHelper* getDeviceModelBrandString(DeviceModel model) {
   return F("");
 }
 
-const __FlashStringHelper* getDeviceModelTypeString(DeviceModel model)
+static const __FlashStringHelper* getDeviceModelTypeString(DeviceModel model)
 {
   switch (model) {
 #if defined(ESP8266) && !defined(LIMIT_BUILD_SIZE)
@@ -862,7 +862,7 @@ void setFactoryDefault(DeviceModel model) {
 /********************************************************************************************\
    Add pre defined plugins and rules.
  \*********************************************************************************************/
-void addSwitchPlugin(taskIndex_t taskIndex, int gpio, const String& name, bool activeLow) {
+static void addSwitchPlugin(taskIndex_t taskIndex, int gpio, const String& name, bool activeLow) {
   setTaskDevice_to_TaskIndex(PLUGIN_GPIO, taskIndex);
   const int pins[] = { gpio, -1, -1 };
 
@@ -900,7 +900,7 @@ void addPredefinedPlugins(const GpioFactorySettingsStruct& gpio_settings) {
   }
 }
 
-void addButtonRelayRule(uint8_t buttonNumber, int relay_gpio) {
+static void addButtonRelayRule(uint8_t buttonNumber, int relay_gpio) {
   Settings.UseRules = true;
   String fileName;
 
@@ -952,9 +952,17 @@ void setTaskDevice_to_TaskIndex(pluginID_t taskdevicenumber, taskIndex_t taskInd
     PluginCall(PLUGIN_SET_DEFAULTS,         &TempEvent, dummy);
     PluginCall(PLUGIN_GET_DEVICEVALUENAMES, &TempEvent, dummy); // the plugin should populate ExtraTaskSettings with its default values.
 
+    const deviceIndex_t DeviceIndex = getDeviceIndex_from_TaskIndex(taskIndex);
+
+    if (!Device[DeviceIndex].TimerOptional) { // Set default delay, unless it's optional...
+      Settings.TaskDeviceTimer[taskIndex] = Settings.Delay;
+    }
+    else {
+      Settings.TaskDeviceTimer[taskIndex] = 0;
+    }
+
     #if FEATURE_MQTT_DISCOVER && FEATURE_CUSTOM_TASKVAR_VTYPE && FEATURE_TASKVALUE_UNIT_OF_MEASURE
     // Fill in standard Unit of measurement and Value Type, if possible
-    const deviceIndex_t DeviceIndex = getDeviceIndex_from_TaskIndex(taskIndex);
     std::vector<DiscoveryItem> discoveryItems;
     MQTT_DiscoveryGetDeviceVType(taskIndex, discoveryItems, getValueCountForTask(taskIndex), dummy);
 
@@ -991,7 +999,7 @@ void setTaskDevice_to_TaskIndex(pluginID_t taskdevicenumber, taskIndex_t taskInd
 // ********************************************************************************
 // Initialize task with some default values applicable for almost all tasks
 // ********************************************************************************
-void setBasicTaskValues(taskIndex_t taskIndex, unsigned long taskdevicetimer,
+void setBasicTaskValues(taskIndex_t taskIndex, uint32_t taskdevicetimer,
                         bool enabled, const String& name, const int pins[3]) {
   if (!validTaskIndex(taskIndex)) { return; }
   const deviceIndex_t DeviceIndex = getDeviceIndex_from_TaskIndex(taskIndex);

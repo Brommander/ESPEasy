@@ -277,7 +277,6 @@ void ResetFactory(bool formatFS)
   Settings.Version = VERSION;
   Settings.Build   = get_build_nr();
 
-  //  Settings.IP_Octet				 = DEFAULT_IP_OCTET;
   //  Settings.Delay                   = DEFAULT_DELAY;
   Settings.Pin_i2c_sda    = gpio_settings.i2c_sda;
   Settings.Pin_i2c_scl    = gpio_settings.i2c_scl;
@@ -295,9 +294,11 @@ void ResetFactory(bool formatFS)
   // advanced Settings
   //  Settings.UseRules                         = DEFAULT_USE_RULES;
   Settings.ControllerEnabled[0]             = DEFAULT_CONTROLLER_ENABLED;
-  Settings.MQTTRetainFlag_unused            = DEFAULT_MQTT_RETAIN;
-  Settings.MessageDelay_unused              = DEFAULT_MQTT_DELAY;
   Settings.MQTTUseUnitNameAsClientId_unused = DEFAULT_MQTT_USE_UNITNAME_AS_CLIENTID;
+
+  #if FEATURE_NETWORK_STATS
+  Settings.NetworkCollectStats_bits         = DEFAULT_NETWORK_COLLECT_STATS_BITS;
+  #endif
 
   // allow to set default latitude and longitude
   #ifdef DEFAULT_LATITUDE
@@ -322,7 +323,6 @@ void ResetFactory(bool formatFS)
   /*
           Settings.GlobalSync_unused	= DEFAULT_USE_GLOBAL_SYNC;
 
-          Settings.IP_Octet						= DEFAULT_IP_OCTET;
           Settings.WDI2CAddress			  = DEFAULT_WD_IC2_ADDRESS;
           Settings.UseSSDP						= DEFAULT_USE_SSDP;
           Settings.ConnectionFailuresThreshold	= DEFAULT_CON_FAIL_THRES;

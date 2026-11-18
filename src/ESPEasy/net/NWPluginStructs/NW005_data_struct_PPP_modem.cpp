@@ -16,13 +16,14 @@
 # include "../../../src/WebServer/ESPEasy_key_value_store_webform.h"
 
 # if FEATURE_TASKVALUE_UNIT_OF_MEASURE
-# include "../../../src/Helpers/ESPEasy_UnitOfMeasure.h"
+#  include "../../../src/Helpers/ESPEasy_UnitOfMeasure.h"
 # endif // if FEATURE_TASKVALUE_UNIT_OF_MEASURE
 
 
 # include <ESPEasySerialPort.h>
 # include <PPP.h>
 # include <NetworkManager.h>
+# include <atomic>
 
 # define NW_PLUGIN_ID  5
 # define NW_PLUGIN_INTERFACE   PPP
@@ -32,6 +33,21 @@ namespace net {
 namespace ppp {
 
 static NWPluginData_static_runtime stats_and_cache(&NW_PLUGIN_INTERFACE, F("PPP"));
+static std::atomic<int8_t> pendingNAPTState{ -1 };
+static bool pppNAPTEnabled{};
+
+static void processPendingNAPTState()
+{
+  const int8_t pendingState = pendingNAPTState.exchange(-1);
+
+  if ((pendingState >= 0) && (pppNAPTEnabled != (pendingState != 0))) {
+    pppNAPTEnabled = pendingState != 0;
+
+    if (WiFi.AP.enableNAPT(pppNAPTEnabled) && pppNAPTEnabled) {
+      addLog(LOG_LEVEL_INFO, F("WiFi.AP.enableNAPT"));
+    }
+  }
+}
 
 
 // Keys as used in the Key-value-store
@@ -140,6 +156,8 @@ NW005_data_struct_PPP_modem::~NW005_data_struct_PPP_modem() {
     Network.removeEvent(nw_event_id);
   }
   nw_event_id = 0;
+  pendingNAPTState.store(0);
+  processPendingNAPTState();
   stats_and_cache.processEvent_and_clear();
 }
 
@@ -540,8 +558,8 @@ void NW005_data_struct_PPP_modem::webform_load(EventStruct *event)
   {
     auto params = NW005_makeWebFormItemParams(NW005_KEY_PIN_RESET_DELAY);
     params._max             = 2000;
-    params._defaultIntValue = 200;
-    showWebformItem(*_kvs, params);
+    params._defaultValue.setInt(200);
+    showWebformItem(*_kvs, std::move(params));
     addUnit(F("ms"));
 
   }
@@ -564,21 +582,21 @@ void NW005_data_struct_PPP_modem::webform_load(EventStruct *event)
   {
     auto params = NW005_makeWebFormItemParams(NW005_KEY_BAUDRATE);
     params._max             = 10000000;
-    params._defaultIntValue = 115200;
-    showWebformItem(*_kvs, params);
+    params._defaultValue.setInt(115200);
+    showWebformItem(*_kvs, std::move(params));
   }
 
   addFormSubHeader(F("Connection Settings"));
   {
     auto params = NW005_makeWebFormItemParams(NW005_KEY_APN);
     params._maxLength = 64;
-    showWebformItem(*_kvs, params);
+    showWebformItem(*_kvs, std::move(params));
     addFormNote(F("Optional, can be left empty"));
   }
   {
     auto params = NW005_makeWebFormItemParams(NW005_KEY_SIM_PIN);
     params._maxLength = 4;
-    showWebformItem(*_kvs, params);
+    showWebformItem(*_kvs, std::move(params));
     addFormNote(F("Only numerical digits"));
   }
 
@@ -875,7 +893,8 @@ void NW005_begin_modem_task(void *parameter)
         NW_PLUGIN_INTERFACE.cmd(F("AT&D1"), 9000);
         digitalWrite(modem_task_data->dtrPin, HIGH);
       }
-      if (!NW_PLUGIN_INTERFACE.attached()) modem_task_data->modem_init_failed = true;
+
+      if (!NW_PLUGIN_INTERFACE.attached()) { modem_task_data->modem_init_failed = true; }
     } else {
       modem_task_data->modem_init_failed = true;
     }
@@ -926,12 +945,12 @@ bool NW005_data_struct_PPP_modem::init(EventStruct *event)
   }
   {
     String apn;
-    _kvs->getValue(NW005_KEY_APN, apn);
+    _kvs->getValue(NW005_KEY_APN, apn, KVS_StorageType::Enum::string_type);
     NW_PLUGIN_INTERFACE.setApn(apn.c_str());
   }
   {
     String pin;
-    _kvs->getValue(NW005_KEY_SIM_PIN, pin);
+    _kvs->getValue(NW005_KEY_SIM_PIN, pin, KVS_StorageType::Enum::string_type);
 
     if (pin.length() >= 4) {
       NW_PLUGIN_INTERFACE.setPin(pin.c_str());
@@ -978,6 +997,8 @@ bool NW005_data_struct_PPP_modem::init(EventStruct *event)
   _modem_task_data.modem_initialized = false;
   _modem_task_data.initializing      = false;
   _modem_task_data.dtrPin            = _kvs->getValueAsInt_or_default(NW005_KEY_PIN_DTR, -1);
+
+  stats_and_cache.clear(event->NetworkIndex);
 
   stats_and_cache.mark_begin_establish_connection();
 
@@ -1047,6 +1068,7 @@ bool NW005_data_struct_PPP_modem::check_connect_failed()
   {
     _modem_task_data.modem_init_failed = false;
     auto stats = getNWPluginData_static_runtime();
+
     if (stats) {
       stats->mark_connect_failed();
     }
@@ -1059,6 +1081,7 @@ bool NW005_data_struct_PPP_modem::check_connect_failed()
 
 bool NW005_data_struct_PPP_modem::initPluginStats()
 {
+  if (!Settings.getNetworkCollectStats(_networkIndex)) { return false; }
   networkStatsVarIndex_t networkStatsVarIndex{};
   PluginStats_Config_t   displayConfig;
 
@@ -1106,42 +1129,48 @@ bool NW005_data_struct_PPP_modem::record_stats()
 
 # endif // if FEATURE_NETWORK_STATS
 
-NWPluginData_static_runtime * NW005_data_struct_PPP_modem::getNWPluginData_static_runtime() { return &stats_and_cache; }
+NWPluginData_static_runtime * NW005_data_struct_PPP_modem::getNWPluginData_static_runtime()
+{
+  processPendingNAPTState();
+  return &stats_and_cache;
+}
 
-void                          NW005_data_struct_PPP_modem::onEvent(arduino_event_id_t event, arduino_event_info_t info) {
-  // TODO TD-er: Must store flags from events in static (or global) object to act on it later.
+bool                          NW005_data_struct_PPP_modem::getStaticIPAddress(IPAddressType addressType, IPAddress& ip) const
+{
+  // No static IP for PPP modem
+  return false;
+}
+
+void NW005_data_struct_PPP_modem::onEvent(arduino_event_id_t event, arduino_event_info_t info) {
   switch (event)
   {
     case ARDUINO_EVENT_PPP_START:
-      stats_and_cache.mark_start();
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::Started);
       break;
     case ARDUINO_EVENT_PPP_STOP:
-      stats_and_cache.mark_stop();
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::Stopped);
       break;
     case ARDUINO_EVENT_PPP_CONNECTED:
-      stats_and_cache.mark_connected();
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::Connected);
       break;
     case ARDUINO_EVENT_PPP_DISCONNECTED:
-      stats_and_cache.mark_disconnected();
-      WiFi.AP.enableNAPT(false);
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::Disconnected);
+      pendingNAPTState.store(0);
       break;
     case ARDUINO_EVENT_PPP_GOT_IP:
-      stats_and_cache.mark_got_IP();
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::GotIP);
 
       //      NW_PLUGIN_INTERFACE.setDefault();
-
-      if (WiFi.AP.enableNAPT(true)) {
-        addLog(LOG_LEVEL_INFO, F("WiFi.AP.enableNAPT"));
-      }
+      pendingNAPTState.store(1);
       break;
 # if FEATURE_USE_IPV6
     case ARDUINO_EVENT_PPP_GOT_IP6:
-      stats_and_cache.mark_got_IPv6(&info.got_ip6);
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::GotIPv6, &info.got_ip6);
       break;
 # endif // if FEATURE_USE_IPV6
     case ARDUINO_EVENT_PPP_LOST_IP:
-      stats_and_cache.mark_lost_IP();
-      WiFi.AP.enableNAPT(false);
+      stats_and_cache.queueEvent(NWPluginData_static_runtime::DeferredEventType::LostIP);
+      pendingNAPTState.store(0);
       break;
 
     default: break;

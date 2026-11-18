@@ -44,15 +44,28 @@
 
 #if defined(ESP8266)
   # include <ESP8266WiFi.h>
-  #define WIFI_CONNECTED   WiFi.isConnected()
+static int WIFI_CONNECT_STATUS() {
+  if (WiFi.isConnected()) {
+    return 7;
+  }
+  return 0;
+}
 #endif // if defined(ESP8266)
 #if defined(ESP32)
   # include <WiFi.h>
-  #define WIFI_CONNECTED   WiFi.STA.connected()
+static int WIFI_CONNECT_STATUS() {
+  if (WiFi.STA.connected()) {
+    if (WiFi.STA.hasIP())  {
+      return 7;
+    }
+    return 1;
+  }
+  return 0;
+}
 #endif // if defined(ESP32)
 
 
-String getReplacementString(const String& format, const String& s) {
+static String getReplacementString(const String& format, const String& s) {
   int startpos = s.indexOf(format);
   int endpos   = s.indexOf('%', startpos + 1);
   if (endpos == -1) {
@@ -74,19 +87,19 @@ String getReplacementString(const String& format, const String& s) {
   return R;
 }
 
-void replSunRiseTimeString(const String& format, String& s, boolean useURLencode) {
+static void replSunRiseTimeString(const String& format, String& s, boolean useURLencode) {
   const String R(getReplacementString(format, s));
 
   repl(R, node_time.getSunriseTimeString(':', ESPEasy_time::getSecOffset(R)), s, useURLencode);
 }
 
-void replSunSetTimeString(const String& format, String& s, boolean useURLencode) {
+static void replSunSetTimeString(const String& format, String& s, boolean useURLencode) {
   const String R(getReplacementString(format, s));
 
   repl(R, node_time.getSunsetTimeString(':', ESPEasy_time::getSecOffset(R)), s, useURLencode);
 }
 
-String timeReplacement_leadZero(int value)
+static String timeReplacement_leadZero(int value)
 {
   char valueString[5] = { 0 };
 
@@ -95,7 +108,7 @@ String timeReplacement_leadZero(int value)
 }
 
 // FIXME TD-er: Try to match these with  StringProvider::getValue
-LabelType::Enum SystemVariables2LabelType(SystemVariables::Enum enumval) {
+static LabelType::Enum SystemVariables2LabelType(SystemVariables::Enum enumval) {
   LabelType::Enum label = LabelType::MAX_LABEL;
 
   switch (enumval)
@@ -176,7 +189,7 @@ String SystemVariables::getSystemVariable(SystemVariables::Enum enumval) {
   switch (enumval)
   {
     case BOOT_CAUSE:        intvalue = lastBootCause; break;                         // Integer value to be used in rules
-    case BSSID:             return (!WIFI_CONNECTED) ? MAC_address().toString() : WiFi.BSSIDstr();
+    case BSSID:             return (!WIFI_CONNECT_STATUS()) ? MAC_address().toString() : WiFi.BSSIDstr();
     case CR:                return String('\r');
     case IP4:               intvalue = static_cast<int>(ESPEasy::net::NetworkLocalIP()[3]); break; // 4th IP octet
     case ISVAR_DOUBLE:      intvalue =
@@ -207,36 +220,36 @@ String SystemVariables::getSystemVariable(SystemVariables::Enum enumval) {
 
     case ISNTP:             intvalue = statusNTPInitialized ? 1 : 0; break;
     case ISWIFIAP:          intvalue = ESPEasy::net::wifi::WifiIsAP(WiFi.getMode()) ? 1 : 0; break;
-    case ISWIFI:            intvalue = WIFI_CONNECTED ? 1 : 0; break;
+    case ISWIFI:            intvalue = WIFI_CONNECT_STATUS(); break;
 #ifdef USES_NW005
     case ISPPP:             intvalue = PPP.connected() ? 1 : 0; break;
 #endif
 
-      // WiFiEventData.wifiStatus; break; // 0=disconnected, 1=connected, 2=got ip, 4=services
-    // initialized
     case LCLTIME_AM:        return node_time.getDateTimeString_ampm('-', ':', ' ');
     case LF:                return String('\n');
     case MAC_INT:           intvalue = getChipId(); break; // Last 24 bit of MAC address as integer, to be used in rules.
     #ifndef LIMIT_BUILD_SIZE
     case S_PI:              {
                               constexpr ESPEASY_RULES_FLOAT_TYPE _pi = M_PI;
+                              constexpr int maxNrDecimals = maxNrDecimals_fpType_constexpr(_pi);
                               #if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
-                              return doubleToString(_pi, maxNrDecimals_fpType(_pi));
+                              return doubleToString(_pi, maxNrDecimals);
                               #else // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
-                              return toString(_pi, maxNrDecimals_fpType(_pi));
+                              return floatToString(_pi, maxNrDecimals);
                               #endif // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
                             }
     case S_E:               {
                               constexpr ESPEASY_RULES_FLOAT_TYPE _e = M_E;
+                              constexpr int maxNrDecimals = maxNrDecimals_fpType_constexpr(_e);
                               #if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
-                              return doubleToString(_e, maxNrDecimals_fpType(_e));
+                              return doubleToString(_e, maxNrDecimals);
                               #else // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
-                              return toString(_e, maxNrDecimals_fpType(_e));
+                              return floatToString(_e, maxNrDecimals);
                               #endif // if FEATURE_USE_DOUBLE_AS_ESPEASY_RULES_FLOAT_TYPE
                             }
     #endif // ifndef LIMIT_BUILD_SIZE
     case SPACE:             return String(' ');
-    case SSID:              return (!WIFI_CONNECTED) ? String(F("--")) : WiFi.SSID();
+    case SSID:              return (!WIFI_CONNECT_STATUS()) ? String(F("--")) : WiFi.SSID();
 
 
     case SYSBUILD_DATE:     return get_build_date();
@@ -290,7 +303,7 @@ String SystemVariables::getSystemVariable(SystemVariables::Enum enumval) {
     #else // if FEATURE_ADC_VCC
     case VCC:               intvalue = -1; break;
     #endif // if FEATURE_ADC_VCC
-    case WI_CH:             intvalue = !WIFI_CONNECTED ? 0 : WiFi.channel(); break;
+    case WI_CH:             intvalue = !WIFI_CONNECT_STATUS() ? 0 : WiFi.channel(); break;
 
     default:
       // Already handled above.
@@ -314,7 +327,7 @@ String SystemVariables::getSystemVariable(SystemVariables::Enum enumval) {
   while (__pos__ != -1) { (S((T_str), s, useURLencode)); __pos__ = s.indexOf(T_str, __pos__ + 1);}
 
 // Parse %vN% to replace ESPEasy variables
-bool parse_pct_v_num_pct(String& s, boolean useURLencode, int start_pos)
+static bool parse_pct_v_num_pct(String& s, boolean useURLencode, int start_pos)
 {
   const String key_prefix = F("%v");
   int v_index = s.indexOf(key_prefix, start_pos);

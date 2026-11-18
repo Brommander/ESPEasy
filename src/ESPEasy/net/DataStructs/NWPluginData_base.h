@@ -7,6 +7,7 @@
 #include "../DataStructs/NWPluginData_static_runtime.h"
 #include "../../../src/DataStructs/ESPEasy_EventStruct.h"
 #include "../../../src/DataStructs/PluginStats_array.h"
+#include "../../../src/DataStructs/PluginStats_Config.h"
 
 #if FEATURE_STORE_NETWORK_INTERFACE_SETTINGS
 # include "../../../src/Helpers/_ESPEasy_key_value_store.h"
@@ -32,6 +33,13 @@ struct NWPluginData_base {
                     NetworkInterface *netif
 #endif // ifdef ESP32
                     );
+
+  enum class IPAddressType {
+    IP,
+    Gateway,
+    Subnetmask,
+    DNS
+  };
 
   virtual ~NWPluginData_base();
 
@@ -109,6 +117,10 @@ struct NWPluginData_base {
 #endif // if FEATURE_NETWORK_TRAFFIC_COUNT
 
   virtual NWPluginData_static_runtime* getNWPluginData_static_runtime() = 0;
+
+  virtual bool getStaticIPAddress(IPAddressType addressType, IPAddress & ip) const = 0;
+
+  bool getStaticIPAddresses(IPAddress & ip, IPAddress & gateway, IPAddress & subnetmask, IPAddress & dns ) const;
 
 
 #if FEATURE_NETWORK_STATS

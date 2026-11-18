@@ -3,6 +3,7 @@
 #include "../../ESPEasy_common.h"
 
 #include "../net/DataStructs/MAC_address.h"
+#include "../net/DataTypes/NetworkIndex.h"
 
 #include <IPAddress.h>
 
@@ -15,13 +16,13 @@ typedef std::vector<IPAddress> IP6Addresses_t;
 #endif // if FEATURE_USE_IPV6
 
 
-#define NETWORK_INDEX_WIFI_STA  0 // Always the first network index
-#define NETWORK_INDEX_WIFI_AP   1 // Always the 2nd network index
-
 namespace ESPEasy {
 namespace net {
 
 void           setNetworkMedium(NetworkMedium_t medium);
+
+
+ESPEasy::net::networkIndex_t getNetworkIndex_defaultNetwork();
 
 // void           NetworkConnectRelaxed();
 bool           NetworkConnected(bool force = false);
@@ -63,7 +64,7 @@ MAC_address WifiSoftAPmacAddress();
 MAC_address WifiSTAmacAddress();
 #endif // if FEATURE_WIFI
 
-void        CheckRunningServices();
+void        CheckRunningServices(bool force = false);
 
 #if FEATURE_ETHERNET
 bool        EthFullDuplex();
