@@ -21,6 +21,20 @@
 //    [1..4] = Registeradresse Query 0..3
 //    [5..8] = Pausezeit Gruppe 1..4 (ms)
 //    [9..12]= Pause-Gruppe Query 0..3
+//
+//  Schreiben (Befehl, z. B. aus Rules, HTTP /control?cmd=... oder MQTT <sysname>/cmd):
+//    [<TaskName>].MBWrite,<Register>,<Wert>[,<Datentyp>[,<FC>]]
+//      Datentyp: u16, s16, u32, s32, float, u32ws, s32ws (oder 0..6).
+//                Ohne Angabe: Datentyp der Query mit diesem Register, sonst u16.
+//      FC:       6 (Write Single Register) oder 16 (Write Multiple Registers).
+//                Ohne Angabe: 6 bei 16-Bit-Typen, 16 bei 32-Bit-Typen.
+//    Ohne [<TaskName>]. wirkt der Befehl auf den ersten aktiven P156-Task.
+//    Schreibaufträge haben Vorrang vor dem Lesen (Warteschlange mit 4 Plätzen).
+//    Ergebnis als Rules-Event:
+//      <TaskName>#WriteOK=<Register>,<Wert>
+//      <TaskName>#WriteError=<Register>,<Code>
+//        Code 1..11 = Modbus-Exception, 253 = Warteschlange voll,
+//        254 = keine Verbindung, 255 = keine/ungültige Antwort (Timeout 500 ms)
 // #######################################################################################################
 
 #define PLUGIN_156
@@ -63,6 +77,13 @@
 
 #define P156_NR_OUTPUT_VALUES 4
 #define P156_NR_PAUSE_GROUPS 4
+
+#define P156_WRITE_QUEUE 4
+#define P156_PENDING_NONE 255
+#define P156_PENDING_WRITE 254
+#define P156_WERR_QUEUE_FULL 253
+#define P156_WERR_CONNECT 254
+#define P156_WERR_TIMEOUT 255
 
 // ============================================================
 // Helper functions
@@ -144,8 +165,24 @@ static int32_t p156_setPause(int32_t packed, uint8_t group, uint32_t ms)
 // ============================================================
 // Instance data
 // ============================================================
+struct P156_WriteJob
+{
+  uint16_t reg = 0;
+  uint16_t words[2] = {0, 0};
+  uint8_t nRegs = 1;
+  uint8_t fc = 6;
+  double value = 0.0; // nur für Event/Log
+};
+
 struct P156_Instance : public PluginTaskData_base
 {
+  taskIndex_t taskIndex = INVALID_TASK_INDEX;
+  P156_WriteJob writeQueue[P156_WRITE_QUEUE];
+  uint8_t writeHead = 0;
+  uint8_t writeCount = 0;
+  P156_WriteJob activeWrite;
+  uint8_t rxBuf[12] = {};
+  uint8_t rxLen = 0;
   WiFiClient client;
   char ip[16] = {};
   uint16_t port = 502;
@@ -168,6 +205,11 @@ struct P156_Instance : public PluginTaskData_base
 
 bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx);
 bool p156_parseValues(P156_Instance *inst, uint8_t qIdx);
+bool p156_connect(P156_Instance *inst);
+bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err);
+bool p156_sendWrite(P156_Instance *inst);
+uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode);
+void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t code);
 
 // ============================================================
 // Plugin main function
@@ -448,7 +490,11 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     inst->errorCount = 0;
     inst->reconnectCount = 0;
     inst->requestTime = 0;
-    inst->pendingQuery = 255;
+    inst->pendingQuery = P156_PENDING_NONE;
+    inst->taskIndex = event->TaskIndex;
+    inst->writeHead = 0;
+    inst->writeCount = 0;
+    inst->rxLen = 0;
     inst->myInit = true;
     success = true;
 
@@ -483,6 +529,33 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     break;
   }
 
+  case PLUGIN_WRITE:
+  {
+    const String command = parseString(string, 1);
+    if (!equals(command, F("mbwrite")))
+      break;
+    success = true; // Befehl gehört zu P156 – Fehler werden geloggt, nicht an andere Plugins weitergereicht
+    P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
+    String err;
+    if (!inst || !inst->myInit)
+      err = F("Task nicht initialisiert");
+    else if (!p156_queueWrite(inst, string, err) && err.isEmpty())
+      err = F("unbekannter Fehler");
+    if (!err.isEmpty())
+    {
+      if (loglevelActiveFor(LOG_LEVEL_ERROR))
+      {
+        String l = F("P156 MBWrite: ");
+        l += err;
+        l += F(" (");
+        l += string;
+        l += ')';
+        addLogMove(LOG_LEVEL_ERROR, l);
+      }
+    }
+    break;
+  }
+
   case PLUGIN_READ:
   {
     P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
@@ -507,7 +580,42 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     // Two-phase Round-Robin:
     // Phase 1: if a request is pending, try to parse the response
     // Phase 2: only send a new request if no response is pending
-    if (inst->pendingQuery < P156_NR_OUTPUT_VALUES)
+    //          (queued write jobs are sent before the next read)
+    if (inst->pendingQuery == P156_PENDING_WRITE)
+    {
+      // Phase 1 (write): pending write — try to read the response
+      uint8_t exCode = 0;
+      const uint8_t res = p156_parseWriteResponse(inst, exCode);
+      if (res != 0)
+      {
+        inst->pendingQuery = P156_PENDING_NONE;
+        inst->errorCount = 0; // device answered (also with exception)
+        p156_writeResult(inst, inst->activeWrite, (res == 1) ? 0 : ((res == 2) ? exCode : P156_WERR_TIMEOUT));
+      }
+      else if (timePassedSince(inst->requestTime) > 500)
+      {
+        inst->pendingQuery = P156_PENDING_NONE;
+        inst->client.clear();
+        inst->rxLen = 0;
+        inst->errorCount++;
+        p156_writeResult(inst, inst->activeWrite, P156_WERR_TIMEOUT);
+      }
+    }
+    else if ((inst->pendingQuery == P156_PENDING_NONE) && (inst->writeCount > 0))
+    {
+      // Phase 2 (write): send the oldest queued write job
+      inst->activeWrite = inst->writeQueue[inst->writeHead];
+      inst->writeHead = (inst->writeHead + 1) % P156_WRITE_QUEUE;
+      inst->writeCount--;
+      if (p156_sendWrite(inst))
+        inst->pendingQuery = P156_PENDING_WRITE;
+      else
+      {
+        inst->errorCount++;
+        p156_writeResult(inst, inst->activeWrite, P156_WERR_CONNECT);
+      }
+    }
+    else if (inst->pendingQuery < P156_NR_OUTPUT_VALUES)
     {
       // Phase 1: pending request — try to read response
       uint8_t qIdx = inst->pendingQuery;
@@ -584,10 +692,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   return success;
 }
 
-bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
+bool p156_connect(P156_Instance *inst)
 {
-  if (!inst)
-    return false;
   // Skip connect attempt if WiFi not ready yet (prevents crash at boot)
   if (!NetworkConnected(0))
     return false;
@@ -607,6 +713,15 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
       return false;
     }
   }
+  return true;
+}
+
+bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
+{
+  if (!inst)
+    return false;
+  if (!p156_connect(inst))
+    return false;
   if (inst->sendCount >= 65535)
     inst->sendCount = 1;
   else
@@ -700,6 +815,304 @@ bool p156_parseValues(P156_Instance *inst, uint8_t qIdx)
   }
   inst->values[qIdx] = v;
   return true;
+}
+
+// ============================================================
+// Write support (MBWrite command)
+// ============================================================
+
+// Datentyp aus Text: u16, s16, u32, s32, float, u32ws, s32ws oder Ziffer 0..6; -1 = ungültig
+static int p156_parseType(const String &s)
+{
+  if (s.isEmpty())
+    return -2; // nicht angegeben
+  const char *names[] = {"u16", "s16", "u32", "s32", "float", "u32ws", "s32ws"};
+  for (int i = 0; i <= P156_TYPE_S32WS; ++i)
+  {
+    if (s.equalsIgnoreCase(names[i]))
+      return i;
+  }
+  int32_t n = 0;
+  if (validIntFromString(s, n) && (n >= 0) && (n <= P156_TYPE_S32WS))
+    return n;
+  return -1;
+}
+
+bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
+{
+  // MBWrite,<Register>,<Wert>[,<Datentyp>[,<FC>]]
+  int32_t reg = 0;
+  if (!validIntFromString(parseString(cmd, 2), reg) || (reg < 0) || (reg > 65535))
+  {
+    err = F("ungültiges Register");
+    return false;
+  }
+  ESPEASY_RULES_FLOAT_TYPE d = 0;
+  if (!validDoubleFromString(parseStringKeepCase(cmd, 3), d))
+  {
+    err = F("ungültiger Wert");
+    return false;
+  }
+  int type = p156_parseType(parseString(cmd, 4));
+  if (type == -1)
+  {
+    err = F("ungültiger Datentyp");
+    return false;
+  }
+  if (type == -2)
+  {
+    // Datentyp der Query mit diesem Register übernehmen, sonst U16
+    type = P156_TYPE_U16;
+    for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+    {
+      if ((inst->regAddr[i] != 0) && (inst->regAddr[i] == (uint32_t)reg))
+      {
+        type = inst->dataType[i];
+        break;
+      }
+    }
+  }
+
+  P156_WriteJob job;
+  job.reg = (uint16_t)reg;
+  job.value = d;
+  uint32_t u = 0;
+  switch (type)
+  {
+  case P156_TYPE_U16:
+    if ((d < 0) || (d > 65535))
+    {
+      err = F("Wert außerhalb 0..65535");
+      return false;
+    }
+    job.nRegs = 1;
+    job.words[0] = (uint16_t)lround(d);
+    break;
+  case P156_TYPE_S16:
+    if ((d < -32768) || (d > 32767))
+    {
+      err = F("Wert außerhalb -32768..32767");
+      return false;
+    }
+    job.nRegs = 1;
+    job.words[0] = (uint16_t)(int16_t)lround(d);
+    break;
+  case P156_TYPE_U32:
+  case P156_TYPE_U32WS:
+    if ((d < 0) || (d > 4294967295.0))
+    {
+      err = F("Wert außerhalb 0..4294967295");
+      return false;
+    }
+    u = (uint32_t)llround(d);
+    break;
+  case P156_TYPE_S32:
+  case P156_TYPE_S32WS:
+    if ((d < -2147483648.0) || (d > 2147483647.0))
+    {
+      err = F("Wert außerhalb des S32-Bereichs");
+      return false;
+    }
+    u = (uint32_t)(int32_t)llround(d);
+    break;
+  case P156_TYPE_FLOAT:
+  {
+    const float f = (float)d;
+    memcpy(&u, &f, sizeof(u));
+    break;
+  }
+  }
+  if (type >= P156_TYPE_U32)
+  {
+    job.nRegs = 2;
+    if ((type == P156_TYPE_U32WS) || (type == P156_TYPE_S32WS))
+    {
+      // Word-Swapped: erstes Register = Low-Word (wie beim Lesen)
+      job.words[0] = (uint16_t)(u & 0xFFFF);
+      job.words[1] = (uint16_t)(u >> 16);
+    }
+    else
+    {
+      // Standard (auch Float): erstes Register = High-Word
+      job.words[0] = (uint16_t)(u >> 16);
+      job.words[1] = (uint16_t)(u & 0xFFFF);
+    }
+  }
+
+  const String fcStr = parseString(cmd, 5);
+  if (fcStr.isEmpty())
+    job.fc = (job.nRegs == 1) ? 6 : 16;
+  else
+  {
+    int32_t fc = 0;
+    if (!validIntFromString(fcStr, fc) || ((fc != 6) && (fc != 16)))
+    {
+      err = F("FC muss 6 oder 16 sein");
+      return false;
+    }
+    if ((fc == 6) && (job.nRegs != 1))
+    {
+      err = F("FC 6 nur für 16-Bit-Typen");
+      return false;
+    }
+    job.fc = (uint8_t)fc;
+  }
+
+  if (inst->writeCount >= P156_WRITE_QUEUE)
+  {
+    err = F("Warteschlange voll");
+    p156_writeResult(inst, job, P156_WERR_QUEUE_FULL);
+    return false;
+  }
+  const uint8_t slot = (inst->writeHead + inst->writeCount) % P156_WRITE_QUEUE;
+  inst->writeQueue[slot] = job;
+  inst->writeCount++;
+  return true;
+}
+
+bool p156_sendWrite(P156_Instance *inst)
+{
+  if (!inst)
+    return false;
+  if (!p156_connect(inst))
+    return false;
+  if (inst->sendCount >= 65535)
+    inst->sendCount = 1;
+  else
+    inst->sendCount++;
+
+  const P156_WriteJob &job = inst->activeWrite;
+  byte req[17];
+  uint8_t len = 0;
+  req[0] = (uint8_t)(inst->sendCount >> 8);
+  req[1] = (uint8_t)inst->sendCount;
+  req[2] = 0;
+  req[3] = 0;
+  req[6] = inst->unitId;
+  req[7] = job.fc;
+  req[8] = (uint8_t)(job.reg >> 8);
+  req[9] = (uint8_t)job.reg;
+  if (job.fc == 6)
+  {
+    req[10] = (uint8_t)(job.words[0] >> 8);
+    req[11] = (uint8_t)job.words[0];
+    len = 12;
+  }
+  else
+  {
+    req[10] = 0;
+    req[11] = job.nRegs;
+    req[12] = (uint8_t)(job.nRegs * 2);
+    len = 13;
+    for (uint8_t i = 0; i < job.nRegs; ++i)
+    {
+      req[len++] = (uint8_t)(job.words[i] >> 8);
+      req[len++] = (uint8_t)job.words[i];
+    }
+  }
+  const uint16_t pduLen = len - 6; // Unit-ID + PDU
+  req[4] = (uint8_t)(pduLen >> 8);
+  req[5] = (uint8_t)pduLen;
+
+  inst->client.clear(); // verspätete Bytes einer abgebrochenen Anfrage verwerfen
+  inst->rxLen = 0;
+  inst->requestTime = millis();
+  return inst->client.write(req, len) == len;
+}
+
+// 0 = noch nicht vollständig, 1 = OK, 2 = Modbus-Exception (exCode), 3 = ungültige Antwort
+uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode)
+{
+  for (;;)
+  {
+    // Exception-Antwort: 9 Bytes, normale Antwort auf FC 6/16: 12 Bytes
+    const uint8_t need = ((inst->rxLen >= 8) && (inst->rxBuf[7] & 0x80)) ? 9 : 12;
+    if (inst->rxLen >= need)
+      break;
+    if (inst->client.available() <= 0)
+      return 0;
+    const int n = inst->client.read(inst->rxBuf + inst->rxLen, need - inst->rxLen);
+    if (n <= 0)
+      return 0;
+    inst->rxLen += (uint8_t)n;
+  }
+  const uint8_t *b = inst->rxBuf;
+  const P156_WriteJob &job = inst->activeWrite;
+  inst->rxLen = 0;
+
+  if ((((uint16_t)b[0] << 8) | b[1]) != inst->sendCount)
+    return 3;
+  if ((b[2] != 0) || (b[3] != 0))
+    return 3;
+  if ((b[7] & 0x7F) != job.fc)
+    return 3;
+  if (b[7] & 0x80)
+  {
+    exCode = b[8];
+    return 2;
+  }
+  if ((((uint16_t)b[8] << 8) | b[9]) != job.reg)
+    return 3;
+  const uint16_t echo = ((uint16_t)b[10] << 8) | b[11];
+  if (job.fc == 6)
+    return (echo == job.words[0]) ? 1 : 3;
+  return (echo == job.nRegs) ? 1 : 3;
+}
+
+void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t code)
+{
+  const String taskName = getTaskDeviceName(inst->taskIndex);
+  const String valStr = doubleToString(job.value, 3, true);
+
+  if (code == 0)
+  {
+    // Register wird gelesen? Dann sofort neu lesen, damit der Taskwert stimmt
+    for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+    {
+      if ((inst->regAddr[i] != 0) && (inst->regAddr[i] == job.reg))
+        inst->lastSend[i] = millis() - inst->pauseMs[inst->pauseGroup[i]] - 1;
+    }
+  }
+
+  if (loglevelActiveFor(code == 0 ? LOG_LEVEL_INFO : LOG_LEVEL_ERROR))
+  {
+    String l = F("P156 MBWrite ");
+    l += taskName;
+    l += F(" reg=");
+    l += job.reg;
+    l += F(" FC=");
+    l += job.fc;
+    l += F(" val=");
+    l += valStr;
+    if (code == 0)
+      l += F(" OK");
+    else
+    {
+      l += F(" Fehler ");
+      l += code;
+    }
+    addLogMove(code == 0 ? LOG_LEVEL_INFO : LOG_LEVEL_ERROR, l);
+  }
+
+  if (Settings.UseRules)
+  {
+    String ev = taskName;
+    if (code == 0)
+    {
+      ev += F("#WriteOK=");
+      ev += job.reg;
+      ev += ',';
+      ev += valStr;
+    }
+    else
+    {
+      ev += F("#WriteError=");
+      ev += job.reg;
+      ev += ',';
+      ev += code;
+    }
+    eventQueue.addMove(std::move(ev));
+  }
 }
 
 #endif // USES_P156
