@@ -1,0 +1,166 @@
+.. include:: ../Plugin/_plugin_substitutions_p15x.repl
+.. _P158_page:
+
+|P158_typename|
+==================================================
+
+|P158_shortinfo|
+
+Plugin details
+--------------
+
+Type: |P158_type|
+
+Port Type: |P158_porttype|
+
+Name: |P158_name|
+
+Status ESP32: |P158_status|
+
+Status ESP8266: |P158_status_lb|
+
+GitHub: |P158_github|_
+
+Maintainer: |P158_maintainer|
+
+Used libraries: |P158_usedlibraries|
+
+Description
+-----------
+
+Controls an I2C analog output module with 4 channels and 10-bit resolution,
+for example a 0-10 V output module for DIN rail I2C systems
+(Horter & Kalb style protocol). Typical uses are power controllers for heating
+rods, dimmers, frequency inverters or valves with a 0-10 V input.
+
+The outputs are set with a command, usually from rules. The task values show the
+values that were written to the module.
+
+Hardware
+--------
+
+Protocol
+^^^^^^^^
+
+For every write the plugin sends three bytes to the module:
+
+.. code-block:: none
+
+  <channel 0-3> <low byte> <high byte>
+
+The value 0-1023 is the 10-bit output value. With a 0-10 V module one step is
+about 10 mV, so ``1000`` gives 10.0 V and ``500`` gives 5.0 V. Check the
+module documentation for the exact scaling.
+
+I2C address
+^^^^^^^^^^^
+
+The plugin uses the 7-bit I2C address. Module manuals often state the 8-bit
+address (write address); the plugin accepts both notations and converts an
+8-bit address automatically when the settings are saved:
+
+.. csv-table::
+  :header: "8-bit address (manual)", "7-bit address"
+  :widths: 12, 12
+
+  "0xB0", "0x58 (default)"
+  "0xB2 ... 0xBE", "0x59 ... 0x5F"
+  "0xD0 ... 0xDE", "0x68 ... 0x6F"
+
+Use Tools → I2C Scan to find the module.
+
+Wiring
+^^^^^^
+
+Connect SDA, SCL and GND of the module to the I2C pins of the ESP (set in
+Hardware → I2C Interface). Many 0-10 V modules need a separate 24 V supply for
+the outputs and 5 V for the I2C side; use a level shifter if the module works
+with 5 V I2C levels.
+
+If the module is supplied via a GPIO-controlled relay, switch the supply on
+before writing values (see the rules example below).
+
+Configuration
+-------------
+
+**Name** A unique name for the task (example: **AnalogOut**).
+
+**Enabled** The device can be enabled or disabled.
+
+**I2C Address (Hex)** Address of the module, e.g. ``0x58``.
+
+**Number Output Values** (section *Output Configuration*) Number of task values,
+1-4. Task value 1 shows channel 0, task value 2 channel 1, and so on. Choose as
+many as channels are used.
+
+.. include:: DataAcquisition.repl
+
+Commands
+--------
+
+.. csv-table::
+  :header: "Command", "Description"
+  :widths: 30, 40
+
+  "``I2CAnalogOutCMD<tasknr>,<channel>,<value>``", "Set output ``<channel>`` (0-3) to ``<value>`` (0-1023). ``<tasknr>`` is the number of this task in the device list. Example for task 1: ``I2CAnalogOutCMD1,0,500``"
+
+The task number is part of the command name, so several modules (one task per
+module) can be used on one ESP.
+
+Commands with a channel outside 0-3 or a value outside 0-1023 are rejected and
+logged.
+
+Output values
+-------------
+
+.. csv-table::
+  :header: "Value", "Description"
+  :widths: 8, 30
+
+  "AnalogOut1 ... AnalogOut4", "Value last written to channel 0 ... 3."
+
+* When the task starts or is disabled, all 4 outputs are set to 0 and the task
+  values are ``-1`` until the first value is written.
+* If the module does not acknowledge a write (not connected, wrong address,
+  supply off), all task values are set to ``-1`` and an error is logged.
+
+The task values can thus be used to monitor the module: as long as a value
+equals the set point, the module has received it.
+
+Rules example
+-------------
+
+Control a heating rod power controller (0-10 V input) on channel 0. The module
+supply is switched with GPIO 19; the set point (0-1000) is calculated elsewhere
+and stored in a dummy task ``Heater#Output``.
+
+.. code-block:: none
+
+  on System#Boot do
+    GPIO,19,0             // module supply off
+    timerSet,1,1
+  endon
+
+  on Rules#Timer=1 do
+    if [Inverter#Power]>0
+      GPIO,19,1           // module supply on while the inverter runs
+    endif
+    I2CAnalogOutCMD1,0,[Heater#Output]
+    timerSet,1,1
+  endon
+
+Change log
+----------
+
+.. versionchanged:: 1.1
+  ...
+
+  |improved|
+  Up to 4 task values (one per channel), 7-bit/8-bit address input, all outputs
+  set to 0 at start.
+
+.. versionadded:: 1.0
+  ...
+
+  |added|
+  Initial release version.

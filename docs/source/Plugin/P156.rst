@@ -25,240 +25,424 @@ Maintainer: |P156_maintainer|
 
 Used libraries: |P156_usedlibraries|
 
-Supported hardware
-------------------
-
-Supports any device communicating over Modbus TCP (Modbus over Ethernet/WiFi).
-Up to 4 registers can be read per task, each with an independent poll interval.
-
-Tested devices:
-
-* Kostal Plenticore inverter (Port 1502, Unit ID 71, Function 03, Float IEEE754)
-* Sungrow SH hybrid inverter (Port 502, Unit ID 1, Function 04, U16/S16/U32/S32)
-* Varta ELM storage system (Port 502, Unit ID 255, Function 03, U16/S16/U32)
-* Any Modbus TCP device with Function 03 or 04
-
-Precautions
+Description
 -----------
 
-The device must be reachable on the local network before the plugin attempts
-a connection. The plugin automatically waits for WiFi to be connected before
-making any TCP connection attempt.
+Generic Modbus TCP client. The plugin talks to any device that offers Modbus TCP
+(Modbus over Ethernet/WiFi), for example inverters, battery storage systems,
+energy meters, heat pumps or PLCs.
 
-Modbus register addresses in this plugin use **PDU addressing** (0-based).
-If your device documentation uses 4xxxxx notation, subtract 400001 from the
-address shown (e.g. 400100 → 99).
+Each task handles **one device** (IP address, port, unit ID) and up to **4 values**.
+Every value is configured on its own:
+
+* **Read** a holding register (function 03) or an input register (function 04).
+* **Write cyclically** a task value into a register (function 06 or 16).
+
+In addition, any register of the device can be written once with the command
+``MBWrite`` (from rules, HTTP or MQTT).
+
+The plugin does not know any device. Register addresses, data types and scaling
+are taken from the documentation of the Modbus device. The examples further down
+show complete, tested configurations for a **Kostal Plenticore** inverter and a
+**Varta** battery storage system.
 
 Hardware
 --------
 
-No additional hardware required. The device must be connected to the same
-network as the ESP32 via Ethernet or WiFi.
+No additional hardware is needed. The Modbus device must be reachable over the
+network (same LAN or routed). Modbus TCP must be enabled on the device; on many
+devices it is off by default.
+
+Basics: Modbus addressing
+-------------------------
+
+The plugin uses **PDU addresses** (0-based register numbers, as they are sent
+on the wire). Device manuals use different notations:
 
 .. csv-table::
-  :header: "Device", "Port", "Unit ID", "Function", "Notes"
-  :widths: 10, 5, 5, 8, 20
+  :header: "Notation in manual", "Example", "Enter in plugin"
+  :widths: 15, 10, 15
 
-  "Kostal Plenticore", "1502", "71", "03", "Float IEEE754"
-  "Sungrow SH", "502", "1", "04", "U16/S16/U32/S32, factor via formula"
-  "Varta ELM", "502", "255", "03", "U16/S16/U32"
+  "PDU / protocol address, decimal", "172", "172"
+  "PDU address, hex", "0xAC", "172"
+  "4xxxxx (holding register, 1-based)", "400173", "172 (subtract 400001)"
+  "3xxxxx (input register, 1-based)", "300173", "172 (subtract 300001), function 04"
+
+If a value is always wrong by one register (e.g. a 32-bit value shows nonsense,
+or a neighbouring value appears), the manual most likely uses 1-based addresses:
+try the address minus 1.
+
+.. note::
+
+   Address **0** switches a value off.
 
 Configuration
 -------------
 
-**Name** A unique name for the task (example: **ModbusMeter**).
+**Name** A unique name for the task (example: **Inverter**). The name is used in
+rules (``[Inverter#Power]``) and as prefix for the commands.
 
 **Enabled** The device can be enabled or disabled.
 
-Sensor
-^^^^^^
+Connection (Verbindung)
+^^^^^^^^^^^^^^^^^^^^^^^
 
-Connection
-""""""""""
+**IPv4 Adresse** IP address of the Modbus device. Give the device a fixed IP
+address (DHCP reservation in the router).
 
-**IPv4 Address** IP address of the Modbus device.
+**Port** TCP port of the Modbus server. The standard port is 502; some devices use
+a different one (e.g. Kostal: 1502).
 
-**Port** TCP port of the Modbus device. Typical values: 502 or 1502.
+**Unit ID** Modbus unit identifier (slave address), 1-255. Many TCP devices accept
+any value, others only one specific value (e.g. Kostal: 71). Gateways that
+forward to Modbus RTU use it to select the RTU slave.
 
-**Unit ID** Modbus unit identifier (slave address). Range: 1–255.
+Pause groups (Pause-Gruppen)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Function Code** Modbus read function:
-
-* ``03`` - Read Holding Registers
-* ``04`` - Read Input Registers
-
-Pause Groups
-""""""""""""
-
-Four independent pause groups control the poll interval for each query.
-Groups 1 and 2 use steps of 100 ms (max 25500 ms).
-Groups 3 and 4 use steps of 1000 ms (max 255 s).
+Each value belongs to one of four pause groups. The pause time of the group is
+the interval in which the value is read (or written). Fast values (power) and
+slow values (energy counters) can thus be polled at different rates in one task.
 
 .. csv-table::
-  :header: "Group", "Step size", "Max interval"
-  :widths: 5, 8, 10
+  :header: "Group", "Default", "Resolution", "Maximum"
+  :widths: 6, 8, 8, 8
 
-  "Group 1", "100 ms", "25500 ms"
-  "Group 2", "100 ms", "25500 ms"
-  "Group 3", "1000 ms", "255 s"
-  "Group 4", "1000 ms", "255 s"
+  "Gruppe 1", "200 ms", "100 ms", "25500 ms"
+  "Gruppe 2", "1000 ms", "100 ms", "25500 ms"
+  "Gruppe 3", "10000 ms", "1000 ms", "255 s"
+  "Gruppe 4", "60000 ms", "1000 ms", "255 s"
 
-Queries (4 Values)
-""""""""""""""""""
+Only one request is on the wire at any time. Choose the pause times not shorter
+than needed: every request costs time on the ESP and on the device.
 
-Each of the 4 output values is configured independently:
+**Block reading**: when a value is due, all other read values of the task with the
+same read function that lie within 32 registers of it are read in the same
+request (one Modbus request can return several registers). These values count as
+freshly read, so they do not need a request of their own. Values that are close
+together in the register map are therefore read with one request at the rate of
+the fastest of them, and all values of the request are from the same moment.
+If the device rejects a block (for example because registers in a gap are not
+defined), the task reads its values one by one from then on. The status block
+in the task settings shows the number of requests and values read.
 
-**Register Address** PDU address (decimal, 0--65535).
+Values 1-4 (Abfragen)
+^^^^^^^^^^^^^^^^^^^^^
 
-.. note::
+For each of the four values:
 
-   4xxxxx notation: subtract 400001 (e.g. 400100 -> 99).
+**Registeradresse** PDU address 1-65535, see `Basics: Modbus addressing`_.
+0 = value not used.
 
-**Data Type** Format of the register data:
+**Funktionscode** What the plugin does with this value:
 
 .. csv-table::
-  :header: "Data Type", "Size", "Description"
-  :widths: 8, 5, 20
+  :header: "Selection", "Modbus function", "Direction"
+  :widths: 20, 15, 25
 
-  "U16", "2 bytes", "Unsigned 16-bit integer"
-  "S16", "2 bytes", "Signed 16-bit integer"
-  "U32", "4 bytes", "Unsigned 32-bit integer (big-endian word order)"
-  "S32", "4 bytes", "Signed 32-bit integer (big-endian word order)"
-  "Float", "4 bytes", "IEEE 754 single precision (e.g. Kostal)"
-  "U32 WS", "4 bytes", "Unsigned 32-bit, word-swapped (low word first, e.g. Varta)"
-  "S32 WS", "4 bytes", "Signed 32-bit, word-swapped (low word first)"
+  "03 - Holding Register lesen", "03 Read Holding Registers", "Device → task value"
+  "04 - Input Register lesen", "04 Read Input Registers", "Device → task value"
+  "06 - Register schreiben (16 Bit)", "06 Write Single Register", "Task value → device, cyclic"
+  "16 - Register schreiben (16/32 Bit, Float)", "16 Write Multiple Registers", "Task value → device, cyclic"
 
-**Pause Group** Assigns this query to one of the four pause groups.
+Which read function is correct is stated in the device manual (holding or input
+register). Some devices answer both. If the device answers with exception 1
+(illegal function) or 2 (illegal address), try the other function.
 
-.. note::
+**Datentyp** Format of the register content:
 
-   Word-swapped types (U32 WS, S32 WS) are required for devices that send the
-   low word before the high word, such as the Varta ELM storage system.
+.. csv-table::
+  :header: "Data type", "Registers", "Description"
+  :widths: 10, 6, 30
+
+  "U16", "1", "Unsigned 16-bit integer, 0..65535"
+  "S16", "1", "Signed 16-bit integer, -32768..32767"
+  "U32", "2", "Unsigned 32-bit integer, first register = high word"
+  "S32", "2", "Signed 32-bit integer, first register = high word"
+  "Float", "2", "IEEE 754 single precision, first register = high word"
+  "U32 WS", "2", "Unsigned 32-bit, word-swapped: first register = low word"
+  "S32 WS", "2", "Signed 32-bit, word-swapped: first register = low word"
+
+32-bit values occupy two consecutive registers; enter the address of the first one.
+The word order differs between manufacturers. If a 32-bit value shows
+nonsense (e.g. huge numbers, or the value jumps by 65536), use the WS variant,
+or change the byte-order setting in the device if it has one.
+
+**Pause-Gruppe** Pause group of this value (see above).
+
+Scaling
+^^^^^^^
+
+The plugin delivers the raw register value (as integer or float). Many devices
+send integers with a fixed scale factor (e.g. 0.1 V or 0.01 kWh), sometimes with
+a separate scale-factor register (SunSpec). Apply the factor in the formula field
+of the task value, e.g. ``%value%*0.1`` or ``%value%/1000``.
 
 .. include:: DataAcquisition.repl
 
-* **Interval**: Controls how often values are published via events/MQTT.
-  The actual poll rate is controlled by the Pause Group settings.
+* **Interval**: How often the task values are sent to the controllers. The
+  values themselves are updated in the interval of their pause group.
 
-Output
+Startup behaviour
+^^^^^^^^^^^^^^^^^
+
+After a boot (or after saving the task) all read values are requested
+immediately. The task sends its values to the controllers only after **every**
+active read value has received a valid answer. This prevents publishing 0
+instead of the real value, which would corrupt counters such as a total
+yield. If a register never answers, the values are sent anyway after 2 minutes.
+
+Connection handling
+^^^^^^^^^^^^^^^^^^^
+
+* The connection is kept open and reused for all requests.
+* On ESP32 the connection is set up **non-blocking**: a device that is switched
+  off, unreachable or busy does not slow down the ESP. Timeout for the connect is
+  1 s.
+* After a failed connect, or when the device does not answer, the next attempt
+  waits 1, 2, 4, 8, 16 and then 30 s. The wait time is reset with the first valid
+  answer.
+* If the device cannot be reached 3 times in a row, the read values are set to 0
+  locally (rules see "no value"), but nothing is sent to the controllers until
+  the device answers again. Counters and statistics in the home automation are
+  therefore not disturbed by 0 values.
+* Timeout for an answer: 500 ms.
+* On ESP8266 the connect is blocking (max. 500 ms), with the same wait times.
+
+.. warning::
+
+   Many devices accept only **one or a few** Modbus TCP clients at the same time
+   (e.g. Varta). Another Modbus client (home automation, monitoring software,
+   a second ESP) can then block this task or be blocked by it. Check the device
+   manual and avoid parallel connections where possible.
+
+Writing registers
+-----------------
+
+Cyclic writing (function 06/16 per value)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If a value is set to function 06 or 16, the task value is **written** to the
+register in the interval of its pause group, using the selected data type. This
+is meant for set points that the device expects to be refreshed regularly (many
+devices fall back to a default when the set point is not renewed, e.g. a power
+limit or a battery charge command).
+
+Set the value with the command ``MBSet`` (see below) or with ``TaskValueSet``.
+
+* After a boot nothing is written until a value has been set.
+* Function 06 can only write one register (16-bit types). With a 32-bit type
+  function 16 is used automatically.
+* ``TaskValueSet`` works on this plugin only if **Allow TaskValueSet on all
+  plugins** is enabled in Tools → Advanced.
+
+Commands
+^^^^^^^^
+
+The commands are sent to a task by prefixing the task name in square brackets.
+Without the prefix the command goes to the first enabled task of this plugin.
+
+.. csv-table::
+  :header: "Command", "Description"
+  :widths: 30, 40
+
+  "``[<task>].MBSet,<valuenr>,<value>``", "Set the value (1-4) that is written cyclically. The value must be set to function 06 or 16. Example: ``[Battery].MBSet,1,2500``"
+  "``[<task>].MBWrite,<register>,<value>[,<type>[,<fc>]]``", "Write one register (once). Example: ``[Battery].MBWrite,1074,1``"
+
+Parameters of ``MBWrite``:
+
+* ``<register>`` PDU address, see `Basics: Modbus addressing`_.
+* ``<type>`` ``u16``, ``s16``, ``u32``, ``s32``, ``float``, ``u32ws``, ``s32ws``
+  (or 0-6). Default: the data type of a value configured with the same register,
+  otherwise ``u16``.
+* ``<fc>`` ``6`` or ``16``. Default: 6 for 16-bit types, 16 for 32-bit types.
+
+Write requests have priority over reading. Up to 4 write requests are queued.
+
+The commands can be sent from rules, via HTTP
+(``http://<esp-ip>/control?cmd=[Battery].MBWrite,1074,1``) or via MQTT
+(topic ``<system name>/cmd``).
+
+Events
 ^^^^^^
 
+The result of a write is reported as rules event:
+
+.. csv-table::
+  :header: "Event", "Description"
+  :widths: 30, 40
+
+  "``<task>#WriteOK=<register>,<value>``", "The device acknowledged the write. For cyclic writing only sent when the value has changed or after an error."
+  "``<task>#WriteError=<register>,<code>``", "The write failed, see codes below. Sent on every error."
+
+.. csv-table::
+  :header: "Code", "Meaning"
+  :widths: 8, 40
+
+  "1", "Modbus exception: illegal function (function not supported)"
+  "2", "Modbus exception: illegal data address (register does not exist or is read-only)"
+  "3", "Modbus exception: illegal data value (value out of range)"
+  "4", "Modbus exception: server device failure"
+  "5-11", "Other Modbus exceptions, see Modbus specification"
+  "253", "Write queue full (more than 4 pending writes)"
+  "254", "No connection to the device"
+  "255", "No or invalid answer (timeout 500 ms)"
+
+Rules example:
+
+.. code-block:: none
+
+  on Battery#WriteError do
+    LogEntry,'Write to register %eventvalue1% failed, code %eventvalue2%'
+  endon
+
+.. warning::
+
+   Writing registers changes the behaviour of the device. Wrong registers or
+   values can switch off an inverter, discharge a battery or damage equipment.
+   Only write registers that the manufacturer documents as writable and test
+   with care.
+
 Output values
-"""""""""""""
+-------------
 
 .. csv-table::
   :header: "Value", "Description"
-  :widths: 5, 30
+  :widths: 8, 30
 
-  "Value 1", "Result of Query 1 register read"
-  "Value 2", "Result of Query 2 register read"
-  "Value 3", "Result of Query 3 register read"
-  "Value 4", "Result of Query 4 register read"
+  "Value 1-4", "Read: last value received from the device. Write: value that is written."
 
-Scaling factors can be applied using the ESPEasy formula field
-(e.g. ``%VALUE%*0.1`` for Sungrow registers that use 0.1 unit steps).
+Example: Kostal Plenticore (inverter)
+-------------------------------------
 
-Indicators (recommended settings)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tested configuration for reading power, state and yield from a Kostal Plenticore
+inverter.
 
-.. csv-table::
-  :header: "Indicator", "Value Name", "Interval", "Formula", "Extra information"
-  :widths: 10, 10, 5, 10, 20
-
-  "Value 1", "Power_W", "10", "", "Direct W value"
-  "Value 2", "Energy_kWh", "60", "%VALUE%*0.1", "Sungrow 0.1 kWh steps"
-  "Value 3", "BattSOC", "10", "%VALUE%*0.1", "Sungrow 0.1 % steps"
-  "Value 4", "BattVoltage", "10", "%VALUE%*0.1", "Sungrow 0.1 V steps"
-
-Register Tables
----------------
-
-The following tables list all known register addresses for tested devices.
-The PDU address (comm address) is used directly in the plugin configuration.
-
-Kostal Plenticore
-^^^^^^^^^^^^^^^^^
-
-Connection: Port **1502**, Unit ID **71** (0x47), Function **03**, Data type **Float**,
-Recommended poll interval: 100 ms.
+Device settings: in the inverter web interface (as installer) enable
+**Modbus/SunSpec (TCP)**. Port **1502**, Unit ID **71**.
 
 .. csv-table::
-  :header: "#", "Name", "PDU Address", "Type", "Unit", "Value Name"
-  :widths: 3, 22, 8, 6, 5, 18
+  :header: "Value", "Register", "Function", "Data type", "Pause group", "Value name", "Unit"
+  :widths: 5, 6, 6, 6, 6, 12, 5
 
-  "1",  "INVERTERSTATE",          "56",  "Float", "-",   "InverterState"
-  "2",  "TOTAL_DC_POWER",         "100", "Float", "W",   "Total_DC_Power"
-  "3",  "HOME_CONS_BATT",         "106", "Float", "W",   "Home_Cons_Batt"
-  "4",  "HOME_CONS_GRID",         "108", "Float", "W",   "Home_Cons_Grid"
-  "5",  "HOME_CONS_PV",           "116", "Float", "W",   "Home_Cons_PV"
-  "6",  "TOTAL_HOME_CONS_BATT",   "110", "Float", "W",   "Total_Home_Cons_Batt"
-  "7",  "TOTAL_HOME_CONS_GRID",   "112", "Float", "W",   "Total_Home_Cons_Grid"
-  "8",  "TOTAL_HOME_CONS_PV",     "114", "Float", "W",   "Total_Home_Cons_PV"
-  "9",  "TOTAL_HOME_CONSUMPTION", "118", "Float", "W",   "Total_Home_Consumption"
-  "10", "TOTAL_AC_POWER",         "172", "Float", "W",   "Total_AC_Power"
-  "11", "BATT_CHARGE_CURRENT",    "190", "Float", "A",   "Batt_Charge_Current"
-  "12", "BATT_STATE_CHARGE",      "210", "Float", "%",   "Batt_State_Charge"
-  "13", "BATT_TEMPERATUR",        "214", "Float", "degC","Batt_Temperatur"
-  "14", "BATT_VOLTAGE",           "216", "Float", "V",   "Batt_Voltage"
-  "15", "TOTAL_YIELD",            "320", "Float", "kWh", "Total_Yield"
-  "16", "DAILY_YIELD",            "322", "Float", "kWh", "Daily_Yield"
-  "17", "YEARLY_YIELD",           "324", "Float", "kWh", "Yearly_Yield"
-  "18", "MONTHLY_YIELD",          "326", "Float", "kWh", "Monthly_Yield"
+  "1", "172", "03", "Float", "1 (200 ms)", "Total_AC_Power", "W"
+  "2", "56", "03", "S16", "1 (200 ms)", "Inverterstate", "-"
+  "3", "320", "03", "Float", "4 (60 s)", "Total_Yield", "Wh"
+  "4", "322", "03", "Float", "4 (60 s)", "Daily_Yield", "Wh"
 
-Sungrow SH
-^^^^^^^^^^
+Further registers of the Plenticore (all function 03, Float):
 
-Connection: Port **502**, Unit ID **1** (0x01), Function **04**,
-Recommended poll interval: 100 ms.
+.. csv-table::
+  :header: "Register", "Content", "Unit"
+  :widths: 6, 25, 5
+
+  "100", "Total DC power", "W"
+  "106", "Home consumption from battery", "W"
+  "108", "Home consumption from grid", "W"
+  "116", "Home consumption from PV", "W"
+  "190", "Battery charge current", "A"
+  "210", "Battery state of charge", "%"
+  "214", "Battery temperature", "°C"
+  "216", "Battery voltage", "V"
+  "324", "Yearly yield", "Wh"
+  "326", "Monthly yield", "Wh"
+
+Inverter state 6 = feed-in (normal operation). See the Kostal Modbus
+documentation for all states and registers.
 
 .. note::
 
-   PDU address = protocol address - 1.
-   Scaling via the ESPEasy formula field where noted.
+   The plugin reads Float with the first register as high word. If the
+   floats show nonsense, check the byte-order setting of the Modbus interface in
+   the inverter.
+
+Example: Varta (battery storage)
+--------------------------------
+
+Tested configuration for reading the state of a Varta storage system (Varta
+element / pulse / one series with Modbus TCP).
+
+Device settings: Port **502**, Unit ID **255** (the Varta also answered with
+Unit ID 1 in the test).
 
 .. csv-table::
-  :header: "#", "Name", "PDU Address", "Type", "Unit", "Formula", "Value Name"
-  :widths: 3, 20, 9, 6, 5, 10, 18
+  :header: "Value", "Register", "Function", "Data type", "Pause group", "Value name", "Unit"
+  :widths: 5, 6, 6, 9, 6, 12, 5
 
-  "1",  "SG_RUNNING_STATE",    "13000", "U16", "-",   "1",         "SG_RunningState"
-  "2",  "SG_TOTAL_DC_POWER",   "5017",  "U32", "W",   "1",         "SG_TotalDCPower"
-  "3",  "SG_BATTERY_POWER",    "13022", "U16", "W",   "1",         "SG_BattPower"
-  "4",  "SG_LOAD_POWER",       "13008", "S32", "W",   "1",         "SG_LoadPower"
-  "5",  "SG_EXPORT_POWER",     "13010", "S32", "W",   "1",         "SG_ExportPower"
-  "6",  "SG_DAILY_PV_GEN",     "13002", "U16", "kWh", "%VALUE%*0.1", "SG_DailyPVGen"
-  "7",  "SG_TOTAL_PV_GEN",     "13003", "U32", "kWh", "%VALUE%*0.1", "SG_TotalPVGen"
-  "8",  "SG_DAILY_IMPORT",     "13036", "U16", "kWh", "%VALUE%*0.1", "SG_DailyImport"
-  "9",  "SG_TOTAL_IMPORT",     "13037", "U32", "kWh", "%VALUE%*0.1", "SG_TotalImport"
-  "10", "SG_TOTAL_AC_POWER",   "13034", "S32", "W",   "1",         "SG_TotalACPower"
-  "11", "SG_BATT_CURRENT",     "13021", "U16", "A",   "%VALUE%*0.1", "SG_BattCurrent"
-  "12", "SG_BATT_SOC",         "13023", "U16", "%",   "%VALUE%*0.1", "SG_BattSOC"
-  "13", "SG_BATT_TEMP",        "13025", "S16", "degC","%VALUE%*0.1", "SG_BattTemp"
-  "14", "SG_BATT_VOLTAGE",     "13020", "U16", "V",   "%VALUE%*0.1", "SG_BattVoltage"
-  "15", "SG_TOTAL_OUTPUT",     "5004",  "U32", "kWh", "%VALUE%*0.1", "SG_TotalOutput"
-  "16", "SG_DAILY_OUTPUT",     "5003",  "U16", "kWh", "%VALUE%*0.1", "SG_DailyOutput"
-  "17", "SG_DAILY_BATT_DISCH", "13026", "U16", "kWh", "%VALUE%*0.1", "SG_DailyBattDisch"
-  "18", "SG_TOTAL_BATT_DISCH", "13027", "U32", "kWh", "%VALUE%*0.1", "SG_TotalBattDisch"
+  "1", "1065", "03", "S16", "1 (300 ms)", "State", "-"
+  "2", "1066", "03", "S16", "1 (300 ms)", "Charge_Power", "W"
+  "3", "1068", "03", "S16", "3 (10 s)", "Charge_Level", "%"
+  "4", "1069", "03", "U32 WS", "4 (60 s)", "Charge_Energy", "Wh"
 
-
-Varta ELM
-^^^^^^^^^
-
-Connection: Port **502**, Unit ID **255** (0xFF), Function **03**,
-Recommended poll interval: 200 ms.
+A second task with the same IP can read further registers, e.g.:
 
 .. csv-table::
-  :header: "#", "Name", "PDU Address", "Type", "Unit", "Value Name"
-  :widths: 3, 16, 9, 6, 8, 16
+  :header: "Register", "Data type", "Content", "Unit"
+  :widths: 6, 6, 25, 5
 
-  "1", "STATE",         "1065", "S16", "-",  "State"
-  "2", "CHARGE_POWER",  "1066", "S16", "W",  "ChargePower"
-  "3", "CHARGE_LEVEL",  "1068", "S16", "%",  "ChargeLevel"
-  "4", "CHARGE_ENERGY", "1069", "U32", "Wh", "ChargeEnergy"
-  "5", "POWER_GRID",    "1078", "S16", "W",  "PowerGrid (neg = feed-in)"
+  "1078", "S16", "Grid power measured by the Varta sensor (positive = import, negative = feed-in)", "W"
 
+* **State**: 2 = charging, 3 = discharging, 4 = standby (see Varta
+  documentation for all states).
+* **Charge_Power**: positive = charging, negative = discharging.
+* The 32-bit counter is word-swapped (low word first): use **U32 WS**.
+* Registers 1065-1070 are read in one request (block reading), so all four
+  values are refreshed at the rate of pause group 1.
+* The Varta accepts only a very limited number of Modbus TCP connections. Do not
+  poll it from other systems at the same time.
+
+Using the values in rules
+-------------------------
+
+Example: switch a load on when the battery is full and power is fed into the grid.
+
+.. code-block:: none
+
+  on Battery#Charge_Level do
+    if [Battery#Charge_Level]>=98 and [Meter#Power]<-1000
+      GPIO,12,1
+    else
+      GPIO,12,0
+    endif
+  endon
+
+Tip: if a task delivers several values at the same rate, enable
+**Single event with all values** in the task settings. Then the rules are
+processed once per read cycle instead of once per value (``Battery#All``
+event), which reduces the load on the ESP considerably.
+
+Troubleshooting
+---------------
+
+.. csv-table::
+  :header: "Symptom", "Cause / solution"
+  :widths: 20, 40
+
+  "No values, log shows connection errors", "Wrong IP or port, Modbus TCP not enabled on the device, or another client occupies the connection."
+  "Log shows exception 2", "Register does not exist: check address (minus 1?), function 03/04 and unit ID."
+  "Log shows exception 1", "Function not supported: try 04 instead of 03 (or vice versa)."
+  "32-bit value is huge or jumps in steps of 65536", "Word order: switch between U32 and U32 WS (S32 / S32 WS)."
+  "Value is 10, 100 or 1000 times too large", "Scale factor: use the formula field, e.g. ``%value%/10``."
+  "Write fails with code 2 or 3", "Register is read-only, or the value is outside the allowed range."
 
 Change log
 ----------
+
+.. versionchanged:: 2.0
+  ...
+
+  |improved|
+  Function code per value (03/04 read, 06/16 cyclic write), command ``MBSet``.
+  Non-blocking connect with back-off on ESP32.
+  No values are sent after startup until all read values were received once,
+  and no values are sent while the device is unreachable.
+  Block reading of neighbouring registers, status block in the task settings.
+
+.. versionadded:: 1.1
+  ...
+
+  |added|
+  Command ``MBWrite`` and events ``WriteOK``/``WriteError``.
 
 .. versionadded:: 1.0
   ...

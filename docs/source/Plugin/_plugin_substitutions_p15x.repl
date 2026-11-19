@@ -64,28 +64,28 @@
 .. |P154_compileinfo| replace:: `.`
 .. |P154_usedlibraries| replace:: `Adafruit BMP3XX Library`
 .. |P155_name| replace:: :cyan:`SML Smartmeter`
-.. |P155_type| replace:: :cyan:`Energy`
-.. |P155_typename| replace:: :cyan:`Energy - SML Smartmeter`
+.. |P155_type| replace:: :cyan:`Energy (AC)`
+.. |P155_typename| replace:: :cyan:`Energy (AC) - SML Smartmeter`
 .. |P155_porttype| replace:: `.`
 .. |P155_status| replace:: :green:`NORMAL`
 .. |P155_status_lb| replace:: `.`
 .. |P155_github| replace:: P155_Smartmeter.ino
-.. _P155_github: https://github.com/letscontrolit/ESPEasy/blob/mega/src/_P155_Smartmeter.ino
+.. _P155_github: https://github.com/Brommander/ESPEasy/blob/PEStable/src/_P155_Smartmeter.ino
 .. |P155_usedby| replace:: `.`
-.. |P155_shortinfo| replace:: `SML/D0 Smartmeter energy sensor`
+.. |P155_shortinfo| replace:: `Reads SML and D0 electricity meters via IR reading head`
 .. |P155_maintainer| replace:: `Custom`
 .. |P155_compileinfo| replace:: `.`
 .. |P155_usedlibraries| replace:: `ESPeasySerial`
-.. |P156_name| replace:: :cyan:`General Modbus TCP`
-.. |P156_type| replace:: :cyan:`Energy`
-.. |P156_typename| replace:: :cyan:`General Modbus TCP`
+.. |P156_name| replace:: :cyan:`Modbus TCP Generic`
+.. |P156_type| replace:: :cyan:`Communication`
+.. |P156_typename| replace:: :cyan:`Communication - Modbus TCP Generic`
 .. |P156_porttype| replace:: `.`
 .. |P156_status| replace:: :green:`NORMAL`
 .. |P156_status_lb| replace:: `.`
 .. |P156_github| replace:: P156_GeneralModbusTCP.ino
-.. _P156_github: https://github.com/letscontrolit/ESPEasy/blob/mega/src/_P156_GeneralModbusTCP.ino
+.. _P156_github: https://github.com/Brommander/ESPEasy/blob/PEStable/src/_P156_GeneralModbusTCP.ino
 .. |P156_usedby| replace:: `.`
-.. |P156_shortinfo| replace:: `Modbus TCP Interface`
+.. |P156_shortinfo| replace:: `Read and write registers of any Modbus TCP device`
 .. |P156_maintainer| replace:: `Custom`
 .. |P156_compileinfo| replace:: `.`
 .. |P156_usedlibraries| replace:: `.`
@@ -103,6 +103,20 @@
 .. |P157_maintainer| replace:: `tonhuisman`
 .. |P157_compileinfo| replace:: `.`
 .. |P157_usedlibraries| replace:: `Noiasca HT16K33 (with a few minor modifications)`
+
+.. |P158_name| replace:: :cyan:`I2C Analog Out`
+.. |P158_type| replace:: :cyan:`Output`
+.. |P158_typename| replace:: :cyan:`Output - I2C Analog Out`
+.. |P158_porttype| replace:: `.`
+.. |P158_status| replace:: :yellow:`TESTING`
+.. |P158_status_lb| replace:: :yellow:`TESTING`
+.. |P158_github| replace:: P158_I2CAnalogOut.ino
+.. _P158_github: https://github.com/Brommander/ESPEasy/blob/PEStable/src/_P158_I2CAnalogOut.ino
+.. |P158_usedby| replace:: `.`
+.. |P158_shortinfo| replace:: `4-channel 10-bit I2C analog output module (e.g. 0-10 V)`
+.. |P158_maintainer| replace:: `Custom`
+.. |P158_compileinfo| replace:: `.`
+.. |P158_usedlibraries| replace:: `.`
 
 .. |P159_name| replace:: :cyan:`LD2410`
 .. |P159_type| replace:: :cyan:`Presence`
