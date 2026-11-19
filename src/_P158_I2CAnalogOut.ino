@@ -1,11 +1,22 @@
 #include "_Plugin_Helper.h"
 #ifdef USES_P158
 
-//#######################################################################################################
-//######################## Plugin 158: I²C Analog Out ########################
-//#######################################################################################################
-
-#define DEF_I2C_ADDRESS_158 0xB0
+// #######################################################################################################
+// ######################## Plugin 158: I²C Analog Out ########################
+// #######################################################################################################
+//
+// 4-Kanal-Analogausgang (10 Bit, z. B. 0-10 V) am I2C-Bus.
+// Protokoll je Schreibvorgang: <Kanal 0-3> <Low-Byte> <High-Byte>, Wert 0-1023.
+//
+// Befehl: I2CAnalogOutCMD<Tasknummer>,<Kanal 0-3>,<Wert 0-1023>
+//   Taskwert i (1-4) zeigt den zuletzt erfolgreich geschriebenen Wert von Kanal i-1,
+//   -1 nach dem Start bzw. nach einem Übertragungsfehler.
+//   Start/Ende des Tasks: alle 4 Kanäle werden auf 0 gesetzt.
+//
+// PCONFIG:
+//   [0] I2C-Adresse (7 Bit)
+//   [1] Ausgabetyp (Anzahl Taskwerte)
+// #######################################################################################################
 
 #include "Wire.h"
 
@@ -13,291 +24,199 @@
 #define PLUGIN_ID_158 158
 #define PLUGIN_NAME_158 "I²C Analog Out [Testing]"
 
-#define P158_I2C_ADDR PCONFIG(0)
+#define P158_DEF_I2C_ADDR       0x58 // 7-Bit-Adresse (= 0xB0 in 8-Bit-Schreibweise)
+#define P158_I2C_ADDR           PCONFIG(0)
 #define P158_SENSOR_TYPE_INDEX  1
-#define P158_NR_OUTPUT_VALUES  getValueCountFromSensorType(static_cast<Sensor_VType>(PCONFIG(P158_SENSOR_TYPE_INDEX)))
+#define P158_NR_OUTPUT_VALUES   getValueCountFromSensorType(static_cast<Sensor_VType>(PCONFIG(P158_SENSOR_TYPE_INDEX)))
+#define P158_NR_CHANNELS        4
+#define P158_MAX_VALUE          1023
 
-#define CMD_NAME "I2CAnalogOutCMD"
+#define P158_CMD_NAME "I2CAnalogOutCMD"
 
-boolean P158_SetValue(uint8_t address, uint8_t channel, uint16_t value);
-void P158_deleteValues(struct EventStruct *event);
+static uint8_t p158_writeChannel(uint8_t address, uint8_t channel, uint16_t value);
+static void    p158_resetOutputs(struct EventStruct *event);
 
-// Variables
-boolean P158_MyInit = false;
-int16_t P158_ValueCh0 = -1;
-int16_t P158_ValueCh1 = -1;
-int16_t P158_ValueCh2 = -1;
-int16_t P158_ValueCh3 = -1;
-// ************************************************************************************************
-
-boolean Plugin_158(uint8_t function, struct EventStruct *event, String &string)
+boolean Plugin_158(uint8_t function, struct EventStruct *event, String& string)
 {
   boolean success = false;
 
   switch (function)
   {
-  case PLUGIN_DEVICE_ADD:
-  {
-    Device[++deviceCount].Number = PLUGIN_ID_158;
-    Device[deviceCount].Type = DEVICE_TYPE_I2C;
-    Device[deviceCount].VType = Sensor_VType::SENSOR_TYPE_SINGLE;
-    Device[deviceCount].Ports = 0;
-    Device[deviceCount].PullUpOption = false;
-    Device[deviceCount].InverseLogicOption = false;
-    Device[deviceCount].FormulaOption = true;
-    Device[deviceCount].ValueCount = 1;
-    Device[deviceCount].SendDataOption = true;
-    Device[deviceCount].TimerOption = true;
-    Device[deviceCount].GlobalSyncOption   = true;
-    Device[deviceCount].OutputDataType = Output_Data_type_t::Simple;
-    break;
-  }
+    case PLUGIN_DEVICE_ADD:
+    {
+      Device[++deviceCount].Number           = PLUGIN_ID_158;
+      Device[deviceCount].Type               = DEVICE_TYPE_I2C;
+      Device[deviceCount].VType              = Sensor_VType::SENSOR_TYPE_SINGLE;
+      Device[deviceCount].Ports              = 0;
+      Device[deviceCount].PullUpOption       = false;
+      Device[deviceCount].InverseLogicOption = false;
+      Device[deviceCount].FormulaOption      = true;
+      Device[deviceCount].ValueCount         = 1;
+      Device[deviceCount].SendDataOption     = true;
+      Device[deviceCount].TimerOption        = true;
+      Device[deviceCount].GlobalSyncOption   = true;
+      Device[deviceCount].OutputDataType     = Output_Data_type_t::Simple;
+      break;
+    }
 
-  case PLUGIN_GET_DEVICENAME:
-  {
-    string = F(PLUGIN_NAME_158);
-    break;
-  }
+    case PLUGIN_GET_DEVICENAME:
+    {
+      string = F(PLUGIN_NAME_158);
+      break;
+    }
 
-  case PLUGIN_GET_DEVICEVALUENAMES:
-  {    
-    for (uint8_t i = 0; i < VARS_PER_TASK; ++i) {
-        String name = F("AnalogOut");
+    case PLUGIN_GET_DEVICEVALUENAMES:
+    {
+      for (uint8_t i = 0; i < VARS_PER_TASK; ++i) {
         if (i < P158_NR_OUTPUT_VALUES) {
-          name += String(i+1),
-          safe_strncpy(ExtraTaskSettings.TaskDeviceValueNames[i],name,sizeof(ExtraTaskSettings.TaskDeviceValueNames[i]));
-          ExtraTaskSettings.TaskDeviceValueDecimals[i] = 2;
+          const String name = concat(F("AnalogOut"), i + 1);
+          safe_strncpy(ExtraTaskSettings.TaskDeviceValueNames[i], name, sizeof(ExtraTaskSettings.TaskDeviceValueNames[i]));
+          ExtraTaskSettings.TaskDeviceValueDecimals[i] = 0;
         } else {
           ZERO_FILL(ExtraTaskSettings.TaskDeviceValueNames[i]);
         }
       }
-    break;
-  }
-
-  case PLUGIN_GET_DEVICEVALUECOUNT:
-  {
-    event->Par1 = P158_NR_OUTPUT_VALUES;
-    success     = true;
-    break;
-  }
-
-  case PLUGIN_GET_DEVICEVTYPE:
-  {
-    event->sensorType = static_cast<Sensor_VType>(PCONFIG(P158_SENSOR_TYPE_INDEX));
-    event->idx        = P158_SENSOR_TYPE_INDEX;
-    success           = true;
-    break;
-  }
-
-  case PLUGIN_SET_DEFAULTS:
-  {
-    PCONFIG(P158_SENSOR_TYPE_INDEX) = static_cast<uint8_t>(Sensor_VType::SENSOR_TYPE_SINGLE);
-    for (uint8_t i = 0; i < VARS_PER_TASK; ++i) {
-      ExtraTaskSettings.TaskDeviceValueDecimals[i] = 2;
+      break;
     }
-    P158_I2C_ADDR = DEF_I2C_ADDRESS_158;
-    break;
-  }
 
-  case PLUGIN_WEBFORM_SHOW_I2C_PARAMS:
-  {
-    if ((P158_I2C_ADDR != 0xB0) || (P158_I2C_ADDR != 0xB2) || (P158_I2C_ADDR != 0xB4) || (P158_I2C_ADDR != 0xB6) || (P158_I2C_ADDR != 0xB8) || (P158_I2C_ADDR != 0xBA) || (P158_I2C_ADDR != 0xBC) || (P158_I2C_ADDR != 0xBE) ||
-        (P158_I2C_ADDR != 0xD0) || (P158_I2C_ADDR != 0xD2) || (P158_I2C_ADDR != 0xD4) || (P158_I2C_ADDR != 0xD6) || (P158_I2C_ADDR != 0xD8) || (P158_I2C_ADDR != 0xDA) || (P158_I2C_ADDR != 0xDC) || (P158_I2C_ADDR != 0xDE))
-    { // Validate I2C Addr.
-      ;//P158_I2C_ADDR = DEF_I2C_ADDRESS_158;
+    case PLUGIN_GET_DEVICEVALUECOUNT:
+    {
+      event->Par1 = P158_NR_OUTPUT_VALUES;
+      success     = true;
+      break;
     }
-    String i2c_addres_string = formatToHex(P158_I2C_ADDR);
-    addFormTextBox(F("I2C Address (Hex)"), F("i2c_addr"), i2c_addres_string, 4);
-    break;
-  }
 
-  case PLUGIN_WEBFORM_LOAD:
-  {
-    success = true;
-    break;
-  }
+    case PLUGIN_GET_DEVICEVTYPE:
+    {
+      event->sensorType = static_cast<Sensor_VType>(PCONFIG(P158_SENSOR_TYPE_INDEX));
+      event->idx        = P158_SENSOR_TYPE_INDEX;
+      success           = true;
+      break;
+    }
 
-  case PLUGIN_WEBFORM_SAVE:
-  {
-    String i2c_address = webArg(F("i2c_addr"));
-    P158_I2C_ADDR = (int)strtol(i2c_address.c_str(), 0, 16);
+    case PLUGIN_SET_DEFAULTS:
+    {
+      PCONFIG(P158_SENSOR_TYPE_INDEX) = static_cast<uint8_t>(Sensor_VType::SENSOR_TYPE_SINGLE);
+      P158_I2C_ADDR                   = P158_DEF_I2C_ADDR;
+      break;
+    }
 
-    success = true;
-    break;
-  }
+    case PLUGIN_WEBFORM_SHOW_I2C_PARAMS:
+    {
+      addFormTextBox(F("I2C Address (Hex)"), F("i2c_addr"), formatToHex(P158_I2C_ADDR), 4);
+      addFormNote(F("7-bit address 0x08..0x77, e.g. 0x58 (= 0xB0 in 8-bit notation)"));
+      break;
+    }
 
-  case PLUGIN_INIT:
-  {
-    // Enable I2C
-    // Wire.begin(); // This is already done by ESP Easy Core
-
-    P158_deleteValues(event);
-    P158_MyInit = true;
-    success = true;
-    break;
-  }
-
-  case PLUGIN_EXIT:
-  {    
-    P158_MyInit = false;
-    P158_deleteValues(event);    
-    break;
-  }
-
-  case PLUGIN_READ:
-  {
-    if (P158_MyInit)
-    {      
+    case PLUGIN_WEBFORM_LOAD:
+    {
       success = true;
       break;
     }
-    break;
-  }
 
-  case PLUGIN_WRITE:
-  {
-    String tmpString = string;
-    boolean result = false;
-    String log;
-
-    String cmd = parseString(tmpString, 1);
-    String mycmd = F(CMD_NAME);
-    mycmd += String(event->TaskIndex + 1);
-    
-    if (cmd.equalsIgnoreCase(mycmd) || cmd.equalsIgnoreCase(F("TaskValueSet")))
-    //if (cmd.equalsIgnoreCase(F(CMD_NAME)) || cmd.equalsIgnoreCase(F("TaskValueSet")))
+    case PLUGIN_WEBFORM_SAVE:
     {
-      log += F("I2CAnalogOut");
-      String paramChannel = parseString(tmpString, 2); // Output 1,2,3,4
-      String paramValue = parseString(tmpString, 3);   // 0 - 1023
+      long addr = strtol(webArg(F("i2c_addr")).c_str(), nullptr, 16);
 
-      uint8_t channel = paramChannel.toInt();
-      uint16_t value = paramValue.toInt();
+      // 8-Bit-Schreibweise (z. B. 0xB0) in die 7-Bit-Adresse umrechnen
+      if ((addr > 0x77) && (addr <= 0xFF)) {
+        addr >>= 1;
+      }
 
-      if (value < 0 || value > 1023)
-      {
-        log += F("ErrorValue");
+      if ((addr < 0x08) || (addr > 0x77)) {
+        addr = P158_DEF_I2C_ADDR;
       }
-      else if (channel < 0 || channel > 3)
-      {
-        log += F("ErrorChannel");
+      P158_I2C_ADDR = addr;
+      success       = true;
+      break;
+    }
+
+    case PLUGIN_INIT:
+    {
+      p158_resetOutputs(event);
+      success = true;
+      break;
+    }
+
+    case PLUGIN_EXIT:
+    {
+      p158_resetOutputs(event);
+      break;
+    }
+
+    case PLUGIN_READ:
+    {
+      success = true;
+      break;
+    }
+
+    case PLUGIN_WRITE:
+    {
+      const String cmd = parseString(string, 1);
+
+      if (!cmd.equalsIgnoreCase(concat(F(P158_CMD_NAME), event->TaskIndex + 1))) {
+        break;
       }
-      else // Wenn CMD Ok
-      {
-        result = P158_SetValue(P158_I2C_ADDR, channel, value);
+      success = true; // Befehl gehört zu diesem Task
+
+      // Werte aus Rules kommen mit Nachkommastellen (z. B. "500.00"): als Zahl lesen, Nachkommastellen abschneiden
+      float   fChannel = -1.0f;
+      float   fValue   = -1.0f;
+      const bool parsed = validFloatFromString(parseString(string, 2), fChannel) &&
+                          validFloatFromString(parseString(string, 3), fValue);
+      const int32_t channel = static_cast<int32_t>(fChannel);
+      const int32_t value   = static_cast<int32_t>(fValue);
+
+      if (!parsed || (fChannel < 0) || (channel >= P158_NR_CHANNELS) ||
+          (fValue < 0) || (value > P158_MAX_VALUE)) {
+        if (loglevelActiveFor(LOG_LEVEL_ERROR)) {
+          addLogMove(LOG_LEVEL_ERROR, concat(F("I2CAnalogOut: invalid command: "), string));
+        }
+        break;
       }
-      if (result)
-      { // Nur wenn Uebertragung keinen Fehler hat Wert eintragen
-        // Wert in interne Variable schreiben
-        switch (channel)
-        {
-        case 0:
-          P158_ValueCh0 = value;
-          UserVar.setFloat(event->TaskIndex,0,P158_ValueCh0);
-          break;
-        case 1:
-          P158_ValueCh0 = value;
-          UserVar.setFloat(event->TaskIndex,1,P158_ValueCh1);
-          break;
-        case 2:
-          P158_ValueCh0 = value;
-          UserVar.setFloat(event->TaskIndex,2,P158_ValueCh2);
-          break;
-        case 3:
-          P158_ValueCh0 = value;
-          UserVar.setFloat(event->TaskIndex,3,P158_ValueCh3);
-          break;
+
+      const uint8_t status = p158_writeChannel(P158_I2C_ADDR, channel, value);
+
+      if (status == 0) {
+        if (channel < P158_NR_OUTPUT_VALUES) {
+          UserVar.setFloat(event->TaskIndex, channel, value);
+        }
+      } else {
+        // Modul hat nicht quittiert: Werte ungültig
+        for (uint8_t i = 0; i < P158_NR_CHANNELS; ++i) {
+          UserVar.setFloat(event->TaskIndex, i, -1);
+        }
+
+        if (loglevelActiveFor(LOG_LEVEL_ERROR)) {
+          addLogMove(LOG_LEVEL_ERROR, strformat(F("I2CAnalogOut: write to %s failed (I2C error %d)"),
+                                                formatToHex(P158_I2C_ADDR).c_str(), status));
         }
       }
-      else
-      {
-        log += F(" ResetValues ");
-        // Alle Werte auf -1 weil Gerät Fehler
-        P158_deleteValues(event);
-      }
-      if (loglevelActiveFor(LOG_LEVEL_INFO))
-      {
-        log += F(": Addr=");
-        log += formatToHex(P158_I2C_ADDR);
-        log += F(": Kanal=");
-        log += paramChannel;
-        log += F(", Wert=");
-        log += paramValue;
-        addLogMove(LOG_LEVEL_INFO, log);
-      }
-      success = true; 
+      break;
     }
-  }
-  break;
   }
   return success;
 }
 
-boolean P158_SetValue(uint8_t address, uint8_t channel, uint16_t value)
+// Rückgabe: 0 = OK, sonst Fehlercode von Wire.endTransmission()
+static uint8_t p158_writeChannel(uint8_t address, uint8_t channel, uint16_t value)
 {
-  boolean result = false;
-  String log = F("I2CAnalogOut Error: ");
-  int16_t status = 0;
-  //uint8_t HBy = value / 256;       // HIGH-Byte berechnen
-  //uint8_t LBy = value - HBy * 256; // LOW-Byte berechnen
-  uint8_t HBy =  (uint8_t) (value >> 8);
-  uint8_t LBy = (uint8_t) (value);
-  
-  Wire.beginTransmission(address); // Start Übertragung zur ANALOG-OUT Karte
-  Wire.write(channel);             // Kanal schreiben
-  Wire.write(LBy);                 // LOW-Byte schreiben
-  Wire.write(HBy);                 // HIGH-Byte schreiben
-  status = Wire.endTransmission(); // Ende
-  log += F(" LowByte ");
-  log += LBy;
-  log += F(" HighByte ");
-  log += HBy;
-  switch (status)
-  {
-  case 0: // Transfer OK
-    log += F("found Device No ");
-    result = true;
-    break;
-  case 1:
-    log += F("Too many Datas");
-    break;
-  case 2:
-    log += F("No Device found!");
-    break;
-  case 3:
-    log += F("Unknow Format!");
-    break;
-  default:
-    log += F("Unknow Error!");
-    break;
+  Wire.beginTransmission(address);
+  Wire.write(channel);                       // Kanal
+  Wire.write(static_cast<uint8_t>(value));      // Low-Byte
+  Wire.write(static_cast<uint8_t>(value >> 8)); // High-Byte
+  return Wire.endTransmission();
+}
+
+// Alle Kanäle auf 0, Taskwerte auf -1 (noch kein Wert geschrieben)
+static void p158_resetOutputs(struct EventStruct *event)
+{
+  for (uint8_t i = 0; i < P158_NR_CHANNELS; ++i) {
+    UserVar.setFloat(event->TaskIndex, i, -1);
+
+    if (i > 0) { delay(10); } // dem Modul Zeit zwischen zwei Übertragungen lassen
+    p158_writeChannel(P158_I2C_ADDR, i, 0);
   }
- // if (!result)
- // {
-    addLogMove(LOG_LEVEL_INFO, log);
- // }
-  return result;
 }
-void P158_deleteValues(struct EventStruct *event)
-{
-  UserVar.setFloat(event->TaskIndex,0,-1);
-  UserVar.setFloat(event->TaskIndex,1,-1);
-  UserVar.setFloat(event->TaskIndex,2,-1);
-  UserVar.setFloat(event->TaskIndex,3,-1);
 
-  for (size_t i = 0; i < P158_NR_OUTPUT_VALUES; i++)
-  {
-    P158_SetValue(P158_I2C_ADDR, 0, 0);
-    delay(20);
-  } 
-
-}
 #endif // USES_P158
-
-/*
-if (result != "true") {
-  String ErrorStr = F("ErrorSend: ");
-  ErrorStr += result;
-  SendStatus(event, ErrorStr + F(" <br>")); // Reply (echo) to sender. This will print message on browser.
-  log += ErrorStr;)
-  }
-            */
