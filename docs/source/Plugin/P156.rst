@@ -196,6 +196,10 @@ Connection handling
 ^^^^^^^^^^^^^^^^^^^
 
 * The connection is kept open and reused for all requests.
+* All tasks with the same IP address and port share **one** connection. Only
+  one request is on the wire per connection; if another task of the same device
+  is waiting, it is served next. This way a device can be read with several
+  tasks (more than 4 values) although it accepts only one Modbus client.
 * On ESP32 the connection is set up **non-blocking**: a device that is switched
   off, unreachable or busy does not slow down the ESP. Timeout for the connect is
   1 s.
@@ -374,7 +378,8 @@ Unit ID 1 in the test).
   "3", "1068", "03", "S16", "3 (10 s)", "Charge_Level", "%"
   "4", "1069", "03", "U32 WS", "4 (60 s)", "Charge_Energy", "Wh"
 
-A second task with the same IP can read further registers, e.g.:
+A second task with the same IP and port can read further registers; both tasks
+share one connection to the Varta, e.g.:
 
 .. csv-table::
   :header: "Register", "Data type", "Content", "Unit"
@@ -437,6 +442,7 @@ Change log
   No values are sent after startup until all read values were received once,
   and no values are sent while the device is unreachable.
   Block reading of neighbouring registers, status block in the task settings.
+  Tasks with the same IP and port share one connection.
 
 .. versionadded:: 1.1
   ...

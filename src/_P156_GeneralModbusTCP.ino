@@ -58,6 +58,9 @@
 //  das Gerät danach keine gültige Antwort, wartet der nächste Versuch 1, 2, 4, 8, 16, dann 30 s.
 //  So bremst ein nicht erreichbares oder belegtes Gerät (z. B. Varta: nur ein Modbus-Client) das ESP nicht.
 //  ESP8266: weiterhin blockierender Aufbau (max. 500 ms), aber mit derselben Wartezeit.
+//  Gemeinsame Verbindung: Alle P156-Tasks mit derselben IP und demselben Port nutzen eine TCP-Verbindung
+//  (viele Geräte, z. B. Varta, erlauben nur sehr wenige Modbus-Clients). Je Verbindung ist immer nur eine Anfrage
+//  unterwegs; wartet ein anderer Task, kommt er als Nächster dran. Transaktions-IDs werden je Verbindung vergeben.
 //  Blockweises Lesen: Ist ein Lesewert fällig, werden alle anderen Lesewerte mit demselben Funktionscode, die
 //  zusammen in höchstens 32 Registern liegen, in derselben Anfrage mitgelesen (zählen als frisch gelesen).
 //  Antwortet das Gerät auf einen Block mit einer Exception, wird für diesen Task wieder einzeln gelesen.
@@ -260,9 +263,6 @@ struct P156_Instance : public PluginTaskData_base
   P156_WriteJob activeWrite;
   uint8_t rxBuf[12] = {};
   uint8_t rxLen = 0;
-  WiFiClient client;
-  char ip[16] = {};
-  uint16_t port = 502;
   uint8_t unitId = 1;
   uint8_t readFc[P156_NR_OUTPUT_VALUES] = {3, 3, 3, 3}; // Funktionscode zum Lesen je Wert (3 oder 4)
   uint32_t regAddr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
@@ -285,10 +285,7 @@ struct P156_Instance : public PluginTaskData_base
   bool gotValue[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Lesewert seit dem Start mindestens einmal gelesen
   uint32_t initTime = 0;                                               // Zeitpunkt von PLUGIN_INIT
   float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // Taskwert beim Start
-  int connFd = -1;                // ESP32: Socket im Aufbau (-1 = kein Aufbau)
-  uint32_t connStart = 0;          // Start des laufenden Aufbaus
-  uint32_t nextConnectAllowed = 0; // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
-  uint8_t connAttempts = 0;        // Verbindungsversuche seit der letzten gültigen Antwort
+  struct P156_Conn *conn = nullptr; // gemeinsame Verbindung zum Gerät (IP + Port)
   // Blockweises Lesen: eine Anfrage liest alle nahe beieinander liegenden Lesewerte
   uint16_t blockStart = 0;         // erstes Register der laufenden Leseanfrage
   uint8_t blockCount = 0;          // Anzahl Register
@@ -301,14 +298,136 @@ struct P156_Instance : public PluginTaskData_base
   uint32_t statRequests = 0;       // Leseanfragen seit dem Start
   uint32_t statValues = 0;         // damit gelesene Werte
 
-  ~P156_Instance()
+  ~P156_Instance();
+};
+
+// ---- Gemeinsame Verbindungen: alle Tasks mit derselben IP und demselben Port nutzen eine TCP-Verbindung ----
+// Es ist immer nur eine Anfrage je Verbindung unterwegs (owner); ein wartender Task kommt als Nächster dran.
+struct P156_Conn
+{
+  char ip[16] = {};
+  uint16_t port = 502;
+  WiFiClient client;
+  int connFd = -1;                  // ESP32: Socket im Aufbau (-1 = kein Aufbau)
+  uint32_t connStart = 0;           // Start des laufenden Aufbaus
+  uint32_t nextConnectAllowed = 0;  // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
+  uint8_t connAttempts = 0;         // Verbindungsversuche seit der letzten gültigen Antwort
+  uint16_t tid = 0;                 // letzte Transaktions-ID dieser Verbindung
+  uint8_t refCount = 0;             // Anzahl Tasks, die diese Verbindung nutzen
+  taskIndex_t owner = INVALID_TASK_INDEX;     // Task mit laufender Anfrage
+  taskIndex_t lastOwner = INVALID_TASK_INDEX; // Task der letzten Anfrage
+  taskIndex_t waiting = INVALID_TASK_INDEX;   // Task, der auf die Verbindung wartet
+
+  ~P156_Conn()
   {
 #ifdef ESP32
     if (connFd >= 0)
       lwip_close(connFd);
 #endif
+    client.stop();
   }
 };
+
+#define P156_MAX_CONN 8
+P156_Conn *p156_getConn(const char *ip, uint16_t port);
+void p156_putConn(P156_Conn *c);
+uint16_t p156_nextTid(P156_Conn *c);
+bool p156_acquire(P156_Instance *inst);
+void p156_release(P156_Instance *inst);
+static P156_Conn *p156_conns[P156_MAX_CONN] = {};
+
+// Verbindung zu ip:port holen (vorhandene teilen oder neu anlegen)
+P156_Conn *p156_getConn(const char *ip, uint16_t port)
+{
+  for (uint8_t i = 0; i < P156_MAX_CONN; ++i)
+  {
+    P156_Conn *c = p156_conns[i];
+    if (c && (c->port == port) && (strcmp(c->ip, ip) == 0))
+    {
+      c->refCount++;
+      return c;
+    }
+  }
+  for (uint8_t i = 0; i < P156_MAX_CONN; ++i)
+  {
+    if (p156_conns[i] == nullptr)
+    {
+      P156_Conn *c = new (std::nothrow) P156_Conn();
+      if (!c)
+        return nullptr;
+      safe_strncpy(c->ip, ip, sizeof(c->ip));
+      c->port = port;
+      c->refCount = 1;
+      p156_conns[i] = c;
+      return c;
+    }
+  }
+  return nullptr;
+}
+
+// Verbindung nicht mehr nutzen; die letzte Nutzung schließt sie
+void p156_putConn(P156_Conn *c)
+{
+  if (!c)
+    return;
+  if (c->refCount > 1)
+  {
+    c->refCount--;
+    return;
+  }
+  for (uint8_t i = 0; i < P156_MAX_CONN; ++i)
+    if (p156_conns[i] == c)
+      p156_conns[i] = nullptr;
+  delete c;
+}
+
+uint16_t p156_nextTid(P156_Conn *c)
+{
+  c->tid = (c->tid >= 65535) ? 1 : c->tid + 1;
+  return c->tid;
+}
+
+// Verbindung für eine Anfrage belegen. false = ein anderer Task fragt gerade (oder ist zuerst dran)
+bool p156_acquire(P156_Instance *inst)
+{
+  P156_Conn *c = inst->conn;
+  const taskIndex_t me = inst->taskIndex;
+  if ((c->owner != INVALID_TASK_INDEX) && (c->owner != me))
+  {
+    c->waiting = me;
+    return false;
+  }
+  if ((c->owner == INVALID_TASK_INDEX) && (c->waiting != INVALID_TASK_INDEX) && (c->waiting != me) && (c->lastOwner == me))
+    return false; // der wartende Task kommt zuerst dran
+  c->owner = me;
+  if (c->waiting == me)
+    c->waiting = INVALID_TASK_INDEX;
+  return true;
+}
+
+// Verbindung freigeben (keine Anfrage dieses Tasks mehr unterwegs)
+void p156_release(P156_Instance *inst)
+{
+  P156_Conn *c = inst->conn;
+  if (c && (c->owner == inst->taskIndex))
+  {
+    c->owner = INVALID_TASK_INDEX;
+    c->lastOwner = inst->taskIndex;
+  }
+}
+
+P156_Instance::~P156_Instance()
+{
+  if (conn)
+  {
+    if (conn->owner == taskIndex)
+      conn->owner = INVALID_TASK_INDEX;
+    if (conn->waiting == taskIndex)
+      conn->waiting = INVALID_TASK_INDEX;
+    p156_putConn(conn);
+    conn = nullptr;
+  }
+}
 
 // Ergebnis von p156_connect()
 #define P156_CONN_OK 1      // verbunden, Anfrage kann gesendet werden
@@ -511,6 +630,11 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         addHtml(inst->noBlock ? F("aus (Geraet lehnt Bloecke ab, Werte einzeln)") : F("an"));
         addRowLabel(F("Neuverbindungen"));
         addHtmlInt(inst->reconnectCount);
+        if (inst->conn)
+        {
+          addRowLabel(F("Verbindung"));
+          addHtml(inst->conn->refCount > 1 ? strformat(F("gemeinsam mit %d weiteren Task(s)"), inst->conn->refCount - 1) : String(F("eigene")));
+        }
       }
     }
 
@@ -598,20 +722,22 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
   case PLUGIN_INIT:
   {
-    initPluginTaskData(event->TaskIndex, new P156_Instance());
+    initPluginTaskData(event->TaskIndex, new (std::nothrow) P156_Instance());
     P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
     if (!inst)
       break;
-    if (inst->client.connected())
-      inst->client.stop();
 
     IPAddress ipAddr((uint32_t)P156_IP_LONG);
     String ipStr = ipAddr.toString();
     if (ipStr == F("0.0.0.0"))
       ipStr = F("192.168.1.1");
-    safe_strncpy(inst->ip, ipStr.c_str(), sizeof(inst->ip));
-
-    inst->port = (P156_PORT > 0) ? (uint16_t)P156_PORT : 502;
+    inst->taskIndex = event->TaskIndex;
+    inst->conn = p156_getConn(ipStr.c_str(), (P156_PORT > 0) ? (uint16_t)P156_PORT : 502);
+    if (!inst->conn)
+    {
+      clearPluginTaskData(event->TaskIndex);
+      break;
+    }
     inst->unitId = (P156_UID > 0) ? (uint8_t)P156_UID : 1;
 
     int dtArr[] = {P156_DT0, P156_DT1, P156_DT2, P156_DT3};
@@ -662,9 +788,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       String log = F("P156 INIT[");
       log += event->TaskIndex;
       log += F("]: IP=");
-      log += inst->ip;
+      log += inst->conn->ip;
       log += F(" Port=");
-      log += inst->port;
+      log += inst->conn->port;
       log += F(" Unit=0x");
       log += String(inst->unitId, HEX);
       log += F(" FC=");
@@ -687,8 +813,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (inst)
     {
       inst->myInit = false;
-      if (inst->client.connected())
-        inst->client.stop();
+      p156_release(inst); // Verbindung bleibt für andere Tasks offen, wird mit der letzten Nutzung geschlossen
     }
     break;
   }
@@ -772,15 +897,16 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
             return false;
         }
       }
+      const bool lost = (inst->conn->connAttempts >= 3);
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       {
         if (inst->mode[i] == P156_MODE_READ) // Schreibwerte behalten den gesetzten Taskwert
-          UserVar.setFloat(event->TaskIndex, i, inst->values[i]);
+          UserVar.setFloat(event->TaskIndex, i, lost ? 0.0f : inst->values[i]);
       }
       // Gerät seit mehreren Versuchen nicht erreichbar: Lesewerte stehen lokal auf 0 (Rules sehen
       // "keine Leistung"), an die Controller wird aber nichts gesendet - eine 0 würde dort
       // Zählerstände und Auswertungen verfälschen. Mit der ersten gültigen Antwort geht es weiter.
-      if (inst->connAttempts >= 3)
+      if (lost)
         return false;
       success = true;
     }
@@ -810,13 +936,13 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         inst->pendingQuery = P156_PENDING_NONE;
         inst->errorCount = 0; // device answered (also with exception)
         if (res != 3)
-          inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
+          inst->conn->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
         p156_writeResult(inst, inst->activeWrite, (res == 1) ? 0 : ((res == 2) ? exCode : P156_WERR_TIMEOUT));
       }
       else if (timePassedSince(inst->requestTime) > 500)
       {
         inst->pendingQuery = P156_PENDING_NONE;
-        inst->client.clear();
+        inst->conn->client.clear();
         inst->rxLen = 0;
         inst->errorCount++;
         p156_writeResult(inst, inst->activeWrite, P156_WERR_TIMEOUT);
@@ -828,7 +954,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       // (während des Verbindungsaufbaus bleibt der Auftrag in der Warteschlange;
       //  in der Wartezeit nach Fehlversuchen wird er sofort mit 254 beendet)
       const int8_t conn = p156_connect(inst);
-      if (conn != P156_CONN_BUSY)
+      if ((conn != P156_CONN_BUSY) && ((conn != P156_CONN_OK) || p156_acquire(inst)))
       {
         inst->activeWrite = inst->writeQueue[inst->writeHead];
         inst->writeHead = (inst->writeHead + 1) % P156_WRITE_QUEUE;
@@ -853,7 +979,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         // alle Werte des Blocks sind frisch gelesen
         inst->pendingQuery = 255;
         inst->errorCount = 0;
-        inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
+        inst->conn->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
         const uint32_t now = millis();
         for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
         {
@@ -871,7 +997,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         // Gerät antwortet mit Modbus-Exception
         inst->pendingQuery = 255;
         inst->errorCount = 0;
-        inst->connAttempts = 0; // das Gerät antwortet – Verbindung ist in Ordnung
+        inst->conn->connAttempts = 0; // das Gerät antwortet – Verbindung ist in Ordnung
         if (!inst->noBlock && (inst->blockMask & ~(1 << qIdx)))
         {
           // Block abgelehnt (z. B. nicht belegte Register in der Lücke): ab jetzt einzeln lesen, sofort erneut
@@ -895,7 +1021,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         // ungültige Antwort oder Timeout — give up, advance to next query
         inst->pendingQuery = 255;
         inst->hdrRead = false;
-        inst->client.clear();
+        inst->conn->client.clear();
         inst->lastSend[qIdx] = millis();
         inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
         inst->errorCount++;
@@ -949,6 +1075,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
           const int8_t conn = p156_connect(inst);
           if ((conn == P156_CONN_BUSY) || (conn == P156_CONN_WAIT))
             break; // Aufbau läuft oder Wartezeit – nichts blockieren, später erneut
+          if ((conn == P156_CONN_OK) && !p156_acquire(inst))
+            break; // anderer Task dieses Geräts fragt gerade – im nächsten Takt erneut
           if (inst->mode[qIdx] != P156_MODE_READ)
           {
             inst->lastSend[qIdx] = millis();
@@ -981,6 +1109,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         }
       }
     }
+    if (inst->pendingQuery == P156_PENDING_NONE)
+      p156_release(inst);
     success = true;
     break;
   }
@@ -1001,13 +1131,13 @@ static uint32_t p156_backoffMs(uint8_t attempts)
 void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, int err)
 {
 #ifdef ESP32
-  if (inst->connFd >= 0)
+  if (inst->conn->connFd >= 0)
   {
-    lwip_close(inst->connFd);
-    inst->connFd = -1;
+    lwip_close(inst->conn->connFd);
+    inst->conn->connFd = -1;
   }
 #endif
-  if (inst->connAttempts >= 3)
+  if (inst->conn->connAttempts >= 3)
   {
     // Gerät seit mehreren Versuchen nicht erreichbar: keine alten Werte weitermelden
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
@@ -1017,9 +1147,9 @@ void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, 
   if (loglevelActiveFor(LOG_LEVEL_INFO))
   {
     String l = F("P156: connect ");
-    l += inst->ip;
+    l += inst->conn->ip;
     l += ':';
-    l += inst->port;
+    l += inst->conn->port;
     l += F(" failed (");
     l += reason;
     if (err != 0)
@@ -1028,7 +1158,7 @@ void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, 
       l += err;
     }
     l += F("), next try in ");
-    l += p156_backoffMs(inst->connAttempts) / 1000;
+    l += p156_backoffMs(inst->conn->connAttempts) / 1000;
     l += 's';
     addLogMove(LOG_LEVEL_INFO, l);
   }
@@ -1039,17 +1169,17 @@ void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, 
 int8_t p156_connect(P156_Instance *inst)
 {
 #ifdef ESP32
-  if (inst->connFd >= 0)
+  if (inst->conn->connFd >= 0)
   {
     // Aufbau läuft: ohne zu warten prüfen, ob der Socket fertig ist
     fd_set wset;
     FD_ZERO(&wset);
-    FD_SET(inst->connFd, &wset);
+    FD_SET(inst->conn->connFd, &wset);
     struct timeval tv = {0, 0};
-    const int res = lwip_select(inst->connFd + 1, nullptr, &wset, nullptr, &tv);
+    const int res = lwip_select(inst->conn->connFd + 1, nullptr, &wset, nullptr, &tv);
     if (res == 0)
     {
-      if (timePassedSince(inst->connStart) < P156_CONNECT_TIMEOUT)
+      if (timePassedSince(inst->conn->connStart) < P156_CONNECT_TIMEOUT)
         return P156_CONN_BUSY;
       p156_connectFailed(inst, F("timeout"), 0);
       return P156_CONN_FAIL;
@@ -1058,7 +1188,7 @@ int8_t p156_connect(P156_Instance *inst)
     socklen_t len = sizeof(sockErr);
     if (res < 0)
       sockErr = errno;
-    else if (lwip_getsockopt(inst->connFd, SOL_SOCKET, SO_ERROR, &sockErr, &len) < 0)
+    else if (lwip_getsockopt(inst->conn->connFd, SOL_SOCKET, SO_ERROR, &sockErr, &len) < 0)
       sockErr = errno;
     if (sockErr != 0)
     {
@@ -1066,31 +1196,31 @@ int8_t p156_connect(P156_Instance *inst)
       return P156_CONN_FAIL;
     }
     // Verbunden: Socket wie bei NetworkClient::connect() wieder blockierend schalten und übergeben
-    const int fd = inst->connFd;
-    inst->connFd = -1;
+    const int fd = inst->conn->connFd;
+    inst->conn->connFd = -1;
     lwip_fcntl(fd, F_SETFL, lwip_fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
-    inst->client = WiFiClient(fd);
-    inst->client.setConnectionTimeout(500); // Lese-/Schreib-Timeout wie bisher
+    inst->conn->client = WiFiClient(fd);
+    inst->conn->client.setConnectionTimeout(500); // Lese-/Schreib-Timeout wie bisher
     inst->rxLen = 0;
     return P156_CONN_OK;
   }
 #endif
 
-  if (inst->client.connected())
+  if (inst->conn->client.connected())
     return P156_CONN_OK;
   // Kein Versuch ohne Netzwerk (verhindert Absturz beim Booten)
   if (!NetworkConnected(0))
     return P156_CONN_WAIT;
-  if ((inst->connAttempts > 0) && !timeOutReached(inst->nextConnectAllowed))
+  if ((inst->conn->connAttempts > 0) && !timeOutReached(inst->conn->nextConnectAllowed))
     return P156_CONN_WAIT;
 
-  inst->client.stop(); // Reste einer abgebrochenen Verbindung freigeben
-  if (inst->connAttempts < 255)
-    inst->connAttempts++;
-  inst->nextConnectAllowed = millis() + p156_backoffMs(inst->connAttempts);
+  inst->conn->client.stop(); // Reste einer abgebrochenen Verbindung freigeben
+  if (inst->conn->connAttempts < 255)
+    inst->conn->connAttempts++;
+  inst->conn->nextConnectAllowed = millis() + p156_backoffMs(inst->conn->connAttempts);
 
 #ifdef ESP32
-  const uint32_t addr = ipaddr_addr(inst->ip);
+  const uint32_t addr = ipaddr_addr(inst->conn->ip);
   if (addr == IPADDR_NONE)
   {
     p156_connectFailed(inst, F("bad IP"), 0);
@@ -1098,7 +1228,7 @@ int8_t p156_connect(P156_Instance *inst)
   }
   struct sockaddr_in sa = {};
   sa.sin_family = AF_INET;
-  sa.sin_port = htons(inst->port);
+  sa.sin_port = htons(inst->conn->port);
   sa.sin_addr.s_addr = addr;
   const int fd = lwip_socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0)
@@ -1114,11 +1244,11 @@ int8_t p156_connect(P156_Instance *inst)
     p156_connectFailed(inst, F("connect"), e);
     return P156_CONN_FAIL;
   }
-  inst->connFd = fd;
-  inst->connStart = millis();
+  inst->conn->connFd = fd;
+  inst->conn->connStart = millis();
   return P156_CONN_BUSY; // Ergebnis im nächsten Takt per select() prüfen
 #else
-  if (!inst->client.connect(inst->ip, inst->port, 500)) // ESP8266: blockierend, max. 500 ms
+  if (!inst->conn->client.connect(inst->conn->ip, inst->conn->port, 500)) // ESP8266: blockierend, max. 500 ms
   {
     p156_connectFailed(inst, F("timeout"), 0);
     return P156_CONN_FAIL;
@@ -1131,12 +1261,9 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
 {
   if (!inst)
     return false;
-  if (!inst->client.connected())
+  if (!inst->conn->client.connected())
     return false;
-  if (inst->sendCount >= 65535)
-    inst->sendCount = 1;
-  else
-    inst->sendCount++;
+  inst->sendCount = p156_nextTid(inst->conn); // Transaktions-ID je Verbindung
   (void)qIdx; // Register und Anzahl stehen in blockStart/blockCount (p156_buildBlock)
   inst->hdrRead = false;
   byte req[12];
@@ -1154,7 +1281,7 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
   req[11] = inst->blockCount;
   inst->requestTime = millis(); // record send time for response timeout
   inst->statRequests++;
-  inst->client.write(req, sizeof(req));
+  inst->conn->client.write(req, sizeof(req));
   return true;
 }
 
@@ -1241,13 +1368,13 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
   if (!inst->hdrRead)
   {
     // Kopf: Transaktions-ID (2), Protokoll (2), Länge (2), Unit (1), Funktionscode (1), Bytezahl bzw. Exception-Code (1)
-    if (inst->client.available() < 9)
+    if (inst->conn->client.available() < 9)
       return 0;
     for (uint8_t i = 0; i < 9; ++i)
-      inst->hdr[i] = inst->client.read();
+      inst->hdr[i] = inst->conn->client.read();
     if ((uint16_t)((inst->hdr[0] << 8) | inst->hdr[1]) != inst->sendCount)
     {
-      inst->client.clear(); // Antwort auf eine ältere Anfrage
+      inst->conn->client.clear(); // Antwort auf eine ältere Anfrage
       return 3;
     }
     if (inst->hdr[7] & 0x80)
@@ -1257,17 +1384,17 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
     }
     if ((inst->hdr[7] != inst->blockFc) || (inst->hdr[8] != inst->blockCount * 2))
     {
-      inst->client.clear();
+      inst->conn->client.clear();
       return 3;
     }
     inst->hdrRead = true;
   }
   const uint8_t n = inst->hdr[8];
-  if (inst->client.available() < n)
+  if (inst->conn->client.available() < n)
     return 0;
   uint8_t data[2 * P156_BLOCK_MAX];
   for (uint8_t i = 0; i < n; ++i)
-    data[i] = inst->client.read();
+    data[i] = inst->conn->client.read();
   inst->hdrRead = false;
   for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
   {
@@ -1287,13 +1414,14 @@ void p156_deviceLost(P156_Instance *inst)
 {
   inst->errorCount = 0;
   inst->hdrRead = false;
-  inst->client.clear();
-  inst->client.stop();
+  inst->conn->client.clear();
+  inst->conn->client.stop();
   for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     inst->values[i] = 0.0f;
-  if (inst->connAttempts < 3)
-    inst->connAttempts = 3;
+  if (inst->conn->connAttempts < 3)
+    inst->conn->connAttempts = 3;
   inst->reconnectCount++;
+  p156_release(inst);
 }
 
 // ============================================================
@@ -1461,12 +1589,9 @@ bool p156_sendWrite(P156_Instance *inst)
 {
   if (!inst)
     return false;
-  if (!inst->client.connected())
+  if (!inst->conn->client.connected())
     return false;
-  if (inst->sendCount >= 65535)
-    inst->sendCount = 1;
-  else
-    inst->sendCount++;
+  inst->sendCount = p156_nextTid(inst->conn); // Transaktions-ID je Verbindung
 
   const P156_WriteJob &job = inst->activeWrite;
   byte req[17];
@@ -1501,10 +1626,10 @@ bool p156_sendWrite(P156_Instance *inst)
   req[4] = (uint8_t)(pduLen >> 8);
   req[5] = (uint8_t)pduLen;
 
-  inst->client.clear(); // verspätete Bytes einer abgebrochenen Anfrage verwerfen
+  inst->conn->client.clear(); // verspätete Bytes einer abgebrochenen Anfrage verwerfen
   inst->rxLen = 0;
   inst->requestTime = millis();
-  return inst->client.write(req, len) == len;
+  return inst->conn->client.write(req, len) == len;
 }
 
 // 0 = noch nicht vollständig, 1 = OK, 2 = Modbus-Exception (exCode), 3 = ungültige Antwort
@@ -1516,9 +1641,9 @@ uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode)
     const uint8_t need = ((inst->rxLen >= 8) && (inst->rxBuf[7] & 0x80)) ? 9 : 12;
     if (inst->rxLen >= need)
       break;
-    if (inst->client.available() <= 0)
+    if (inst->conn->client.available() <= 0)
       return 0;
-    const int n = inst->client.read(inst->rxBuf + inst->rxLen, need - inst->rxLen);
+    const int n = inst->conn->client.read(inst->rxBuf + inst->rxLen, need - inst->rxLen);
     if (n <= 0)
       return 0;
     inst->rxLen += (uint8_t)n;
