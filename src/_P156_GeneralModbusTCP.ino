@@ -2,6 +2,11 @@
 
 #ifdef USES_P156
 
+#ifdef ESP32
+# include <lwip/sockets.h>
+# include <errno.h>
+#endif
+
 // #######################################################################################################
 // ######################## Plugin 156: General Modbus TCP ########################
 // #######################################################################################################
@@ -35,6 +40,12 @@
 //      <TaskName>#WriteError=<Register>,<Code>
 //        Code 1..11 = Modbus-Exception, 253 = Warteschlange voll,
 //        254 = keine Verbindung, 255 = keine/ungültige Antwort (Timeout 500 ms)
+//
+//  Verbindungsaufbau (ESP32): nicht blockierend. connect() kehrt sofort zurück, der Ausgang wird in
+//  den folgenden 100-ms-Takten ohne Warten geprüft (Timeout 1 s). Schlägt der Aufbau fehl oder liefert
+//  das Gerät danach keine gültige Antwort, wartet der nächste Versuch 1, 2, 4, 8, 16, dann 30 s.
+//  So bremst ein nicht erreichbares oder belegtes Gerät (z. B. Varta: nur ein Modbus-Client) das ESP nicht.
+//  ESP8266: weiterhin blockierender Aufbau (max. 500 ms), aber mit derselben Wartezeit.
 // #######################################################################################################
 
 #define PLUGIN_156
@@ -201,11 +212,32 @@ struct P156_Instance : public PluginTaskData_base
   uint32_t requestTime = 0;                                // time when pending request was sent (0 = none)
   uint8_t pendingQuery = 255;                              // query index of pending request (255 = none)
   float values[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
+  int connFd = -1;                 // ESP32: Socket im Aufbau (-1 = kein Aufbau)
+  uint32_t connStart = 0;          // Start des laufenden Aufbaus
+  uint32_t nextConnectAllowed = 0; // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
+  uint8_t connAttempts = 0;        // Verbindungsversuche seit der letzten gültigen Antwort
+
+  ~P156_Instance()
+  {
+#ifdef ESP32
+    if (connFd >= 0)
+      lwip_close(connFd);
+#endif
+  }
 };
+
+// Ergebnis von p156_connect()
+#define P156_CONN_OK 1      // verbunden, Anfrage kann gesendet werden
+#define P156_CONN_BUSY 0    // Aufbau läuft – im nächsten Takt erneut prüfen
+#define P156_CONN_FAIL -1   // Aufbau eben fehlgeschlagen
+#define P156_CONN_WAIT -2   // Wartezeit nach Fehlversuch oder kein Netzwerk
+#define P156_CONNECT_TIMEOUT 1000
+#define P156_BACKOFF_MAX 30000
 
 bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx);
 bool p156_parseValues(P156_Instance *inst, uint8_t qIdx);
-bool p156_connect(P156_Instance *inst);
+int8_t p156_connect(P156_Instance *inst);
+void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, int err);
 bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err);
 bool p156_sendWrite(P156_Instance *inst);
 uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode);
@@ -590,6 +622,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       {
         inst->pendingQuery = P156_PENDING_NONE;
         inst->errorCount = 0; // device answered (also with exception)
+        if (res != 3)
+          inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
         p156_writeResult(inst, inst->activeWrite, (res == 1) ? 0 : ((res == 2) ? exCode : P156_WERR_TIMEOUT));
       }
       else if (timePassedSince(inst->requestTime) > 500)
@@ -604,15 +638,21 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     else if ((inst->pendingQuery == P156_PENDING_NONE) && (inst->writeCount > 0))
     {
       // Phase 2 (write): send the oldest queued write job
-      inst->activeWrite = inst->writeQueue[inst->writeHead];
-      inst->writeHead = (inst->writeHead + 1) % P156_WRITE_QUEUE;
-      inst->writeCount--;
-      if (p156_sendWrite(inst))
-        inst->pendingQuery = P156_PENDING_WRITE;
-      else
+      // (während des Verbindungsaufbaus bleibt der Auftrag in der Warteschlange;
+      //  in der Wartezeit nach Fehlversuchen wird er sofort mit 254 beendet)
+      const int8_t conn = p156_connect(inst);
+      if (conn != P156_CONN_BUSY)
       {
-        inst->errorCount++;
-        p156_writeResult(inst, inst->activeWrite, P156_WERR_CONNECT);
+        inst->activeWrite = inst->writeQueue[inst->writeHead];
+        inst->writeHead = (inst->writeHead + 1) % P156_WRITE_QUEUE;
+        inst->writeCount--;
+        if ((conn == P156_CONN_OK) && p156_sendWrite(inst))
+          inst->pendingQuery = P156_PENDING_WRITE;
+        else
+        {
+          inst->errorCount++;
+          p156_writeResult(inst, inst->activeWrite, P156_WERR_CONNECT);
+        }
       }
     }
     else if (inst->pendingQuery < P156_NR_OUTPUT_VALUES)
@@ -624,6 +664,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       {
         inst->pendingQuery = 255;
         inst->errorCount = 0;
+        inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
         inst->lastSend[qIdx] = millis();
         inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
       }
@@ -661,7 +702,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         }
         if (timePassedSince(inst->lastSend[qIdx]) >= inst->pauseMs[group])
         {
-          bool ok = p156_sendRequest(inst, qIdx);
+          const int8_t conn = p156_connect(inst);
+          if ((conn == P156_CONN_BUSY) || (conn == P156_CONN_WAIT))
+            break; // Aufbau läuft oder Wartezeit – nichts blockieren, später erneut
+          bool ok = (conn == P156_CONN_OK) && p156_sendRequest(inst, qIdx);
           if (ok)
           {
             inst->pendingQuery = qIdx; // response will be read in next cycle(s)
@@ -692,35 +736,150 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   return success;
 }
 
-bool p156_connect(P156_Instance *inst)
+// Wartezeit nach dem n-ten Versuch ohne gültige Antwort: 1, 2, 4, 8, 16, 30, 30 … s
+static uint32_t p156_backoffMs(uint8_t attempts)
 {
-  // Skip connect attempt if WiFi not ready yet (prevents crash at boot)
-  if (!NetworkConnected(0))
-    return false;
-  if (!inst->client.connected())
+  if (attempts == 0)
+    return 0;
+  const uint8_t shift = (attempts > 6) ? 5 : (attempts - 1);
+  const uint32_t ms = 1000UL << shift;
+  return (ms > P156_BACKOFF_MAX) ? P156_BACKOFF_MAX : ms;
+}
+
+void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, int err)
+{
+#ifdef ESP32
+  if (inst->connFd >= 0)
   {
-    if (!inst->client.connect(inst->ip, inst->port, 500)) // 500ms TCP connect timeout
-    {
-      // Log only every 10th error (avoids log flood when device is offline)
-      if (loglevelActiveFor(LOG_LEVEL_INFO) && (inst->errorCount % 10 == 0))
-      {
-        String l = F("P156: connect failed ");
-        l += inst->ip;
-        l += ':';
-        l += inst->port;
-        addLogMove(LOG_LEVEL_INFO, l);
-      }
-      return false;
-    }
+    lwip_close(inst->connFd);
+    inst->connFd = -1;
   }
-  return true;
+#endif
+  if (inst->connAttempts >= 3)
+  {
+    // Gerät seit mehreren Versuchen nicht erreichbar: keine alten Werte weitermelden
+    for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+      inst->values[i] = 0.0f;
+  }
+  inst->reconnectCount++;
+  if (loglevelActiveFor(LOG_LEVEL_INFO))
+  {
+    String l = F("P156: connect ");
+    l += inst->ip;
+    l += ':';
+    l += inst->port;
+    l += F(" failed (");
+    l += reason;
+    if (err != 0)
+    {
+      l += ' ';
+      l += err;
+    }
+    l += F("), next try in ");
+    l += p156_backoffMs(inst->connAttempts) / 1000;
+    l += 's';
+    addLogMove(LOG_LEVEL_INFO, l);
+  }
+}
+
+// Nicht-blockierender Verbindungsaufbau, wird jeden Takt aufgerufen solange eine Anfrage ansteht.
+// Rückgabe: P156_CONN_OK / _BUSY / _FAIL / _WAIT (siehe oben)
+int8_t p156_connect(P156_Instance *inst)
+{
+#ifdef ESP32
+  if (inst->connFd >= 0)
+  {
+    // Aufbau läuft: ohne zu warten prüfen, ob der Socket fertig ist
+    fd_set wset;
+    FD_ZERO(&wset);
+    FD_SET(inst->connFd, &wset);
+    struct timeval tv = {0, 0};
+    const int res = lwip_select(inst->connFd + 1, nullptr, &wset, nullptr, &tv);
+    if (res == 0)
+    {
+      if (timePassedSince(inst->connStart) < P156_CONNECT_TIMEOUT)
+        return P156_CONN_BUSY;
+      p156_connectFailed(inst, F("timeout"), 0);
+      return P156_CONN_FAIL;
+    }
+    int sockErr = 0;
+    socklen_t len = sizeof(sockErr);
+    if (res < 0)
+      sockErr = errno;
+    else if (lwip_getsockopt(inst->connFd, SOL_SOCKET, SO_ERROR, &sockErr, &len) < 0)
+      sockErr = errno;
+    if (sockErr != 0)
+    {
+      p156_connectFailed(inst, F("error"), sockErr);
+      return P156_CONN_FAIL;
+    }
+    // Verbunden: Socket wie bei NetworkClient::connect() wieder blockierend schalten und übergeben
+    const int fd = inst->connFd;
+    inst->connFd = -1;
+    lwip_fcntl(fd, F_SETFL, lwip_fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
+    inst->client = WiFiClient(fd);
+    inst->client.setConnectionTimeout(500); // Lese-/Schreib-Timeout wie bisher
+    inst->rxLen = 0;
+    return P156_CONN_OK;
+  }
+#endif
+
+  if (inst->client.connected())
+    return P156_CONN_OK;
+  // Kein Versuch ohne Netzwerk (verhindert Absturz beim Booten)
+  if (!NetworkConnected(0))
+    return P156_CONN_WAIT;
+  if ((inst->connAttempts > 0) && !timeOutReached(inst->nextConnectAllowed))
+    return P156_CONN_WAIT;
+
+  inst->client.stop(); // Reste einer abgebrochenen Verbindung freigeben
+  if (inst->connAttempts < 255)
+    inst->connAttempts++;
+  inst->nextConnectAllowed = millis() + p156_backoffMs(inst->connAttempts);
+
+#ifdef ESP32
+  const uint32_t addr = ipaddr_addr(inst->ip);
+  if (addr == IPADDR_NONE)
+  {
+    p156_connectFailed(inst, F("bad IP"), 0);
+    return P156_CONN_FAIL;
+  }
+  struct sockaddr_in sa = {};
+  sa.sin_family = AF_INET;
+  sa.sin_port = htons(inst->port);
+  sa.sin_addr.s_addr = addr;
+  const int fd = lwip_socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0)
+  {
+    p156_connectFailed(inst, F("socket"), errno);
+    return P156_CONN_FAIL;
+  }
+  lwip_fcntl(fd, F_SETFL, lwip_fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+  if ((lwip_connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) && (errno != EINPROGRESS))
+  {
+    const int e = errno;
+    lwip_close(fd);
+    p156_connectFailed(inst, F("connect"), e);
+    return P156_CONN_FAIL;
+  }
+  inst->connFd = fd;
+  inst->connStart = millis();
+  return P156_CONN_BUSY; // Ergebnis im nächsten Takt per select() prüfen
+#else
+  if (!inst->client.connect(inst->ip, inst->port, 500)) // ESP8266: blockierend, max. 500 ms
+  {
+    p156_connectFailed(inst, F("timeout"), 0);
+    return P156_CONN_FAIL;
+  }
+  return P156_CONN_OK;
+#endif
 }
 
 bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
 {
   if (!inst)
     return false;
-  if (!p156_connect(inst))
+  if (!inst->client.connected())
     return false;
   if (inst->sendCount >= 65535)
     inst->sendCount = 1;
@@ -974,7 +1133,7 @@ bool p156_sendWrite(P156_Instance *inst)
 {
   if (!inst)
     return false;
-  if (!p156_connect(inst))
+  if (!inst->client.connected())
     return false;
   if (inst->sendCount >= 65535)
     inst->sendCount = 1;
