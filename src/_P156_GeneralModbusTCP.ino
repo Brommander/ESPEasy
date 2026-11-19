@@ -13,10 +13,12 @@
 //  PCONFIG:
 //    [0] Port
 //    [1] Unit ID
-//    [2] FuncCode-Index (0=Func03, 1=Func04)
+//    [2] alter gemeinsamer Lese-Funktionscode (0=Func03, 1=Func04). Nur noch für alte Konfigurationen:
+//        "Lesen 03" (Funktion 0) liest mit 04, wenn hier 1 steht. Beim Speichern wird er auf 0 gesetzt.
 //    [3-6] Datentyp Query 0-3 (0=U16,1=S16,2=U32,3=S32,4=Float)
 //    [7] Pause-Gruppen gepackt (bits 0-1=Q0, 2-3=Q1, 4-5=Q2, 6-7=Q3)
-//        Funktion je Wert (bits 8-9=Q0, 10-11=Q1, 12-13=Q2, 14-15=Q3): 0=Lesen, 1=FC06 schreiben, 2=FC16 schreiben
+//        Funktion je Wert (bits 8-9=Q0, 10-11=Q1, 12-13=Q2, 14-15=Q3):
+//          0=03 lesen, 1=06 schreiben, 2=16 schreiben, 3=04 lesen
 //  PCONFIG_LONG:
 //    [0] IP als uint32
 //    [1] reg0(bits0-15) | reg1(bits16-31)
@@ -29,7 +31,8 @@
 //    [9..12]= Pause-Gruppe Query 0..3
 //    [13..16]= Funktion Query 0..3
 //
-//  Zyklisch schreiben (Funktion "06 schreiben" / "16 schreiben" bei einem Wert):
+//  Funktionscode je Wert: 03/04 = lesen, 06/16 = zyklisch schreiben.
+//  Zyklisch schreiben (Funktionscode 06 oder 16 bei einem Wert):
 //    Der Taskwert wird im Takt seiner Pause-Gruppe in das Register geschrieben (Datentyp wie eingestellt).
 //    Wert setzen: [<TaskName>].MBSet,<Wertnr 1-4>,<Wert>  (Rules, HTTP /control?cmd=..., MQTT <sysname>/cmd)
 //    oder TaskValueSet (nur wenn "Allow TaskValueSet on all plugins" in den Advanced Settings an ist).
@@ -70,6 +73,7 @@
 #define P156_MODE_READ 0
 #define P156_MODE_FC6 1
 #define P156_MODE_FC16 2
+#define P156_MODE_RAW_READ04 3 // nur gespeichert; intern P156_MODE_READ mit readFc = 4
 
 #define P156_PORT PCONFIG(0)
 #define P156_PORT_LBL PCONFIG_LABEL(0)
@@ -127,8 +131,36 @@ static int16_t p156_packGroup(int16_t packed, uint8_t qIdx, uint8_t group)
 
 static uint8_t p156_getMode(uint8_t qIdx, int16_t pg)
 {
-  const uint8_t m = (uint8_t)((((uint16_t)pg) >> (8 + qIdx * 2)) & 0x03);
-  return (m > P156_MODE_FC16) ? P156_MODE_READ : m;
+  return (uint8_t)((((uint16_t)pg) >> (8 + qIdx * 2)) & 0x03); // gespeicherter Rohwert 0..3
+}
+
+// Auswahl im Formular: 0=03 lesen, 1=04 lesen, 2=06 schreiben, 3=16 schreiben
+static uint8_t p156_rawToUi(uint8_t raw, int16_t oldFunc)
+{
+  switch (raw)
+  {
+  case P156_MODE_FC6:
+    return 2;
+  case P156_MODE_FC16:
+    return 3;
+  case P156_MODE_RAW_READ04:
+    return 1;
+  }
+  return (oldFunc == 1) ? 1 : 0; // alte Konfiguration mit gemeinsamem FC 04
+}
+
+static uint8_t p156_uiToRaw(uint8_t ui)
+{
+  switch (ui)
+  {
+  case 1:
+    return P156_MODE_RAW_READ04;
+  case 2:
+    return P156_MODE_FC6;
+  case 3:
+    return P156_MODE_FC16;
+  }
+  return P156_MODE_READ;
 }
 
 static int16_t p156_packMode(int16_t packed, uint8_t qIdx, uint8_t mode)
@@ -227,7 +259,7 @@ struct P156_Instance : public PluginTaskData_base
   char ip[16] = {};
   uint16_t port = 502;
   uint8_t unitId = 1;
-  uint8_t funcCode = 3;
+  uint8_t readFc[P156_NR_OUTPUT_VALUES] = {3, 3, 3, 3}; // Funktionscode zum Lesen je Wert (3 oder 4)
   uint32_t regAddr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
   uint8_t dataType[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
   uint8_t pauseGroup[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
@@ -362,14 +394,6 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     addFormNote(F("Typisch: 502 oder 1502"));
     addFormNumericBox(F("Unit ID"), P156_UID_LBL, P156_UID, 1, 255);
     addFormNote(F("Typisch: 1-255"));
-    {
-      const __FlashStringHelper *opts[] = {
-          F("03 - Holding Register"),
-          F("04 - Input Register"),
-      };
-      FormSelectorOptions sel(NR_ELEMENTS(opts), opts);
-      sel.addFormSelector(F("Funktionscode"), P156_FUNC_LBL, P156_FUNC);
-    }
 
     // ---- Pause-Gruppen ----
     addFormHeader(F("Pause-Gruppen"));
@@ -401,7 +425,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         F("Gruppe 4"),
     };
     const __FlashStringHelper *modeOpts[] = {
-        F("Lesen (Funktionscode oben: 03/04)"),
+        F("03 - Holding Register lesen"),
+        F("04 - Input Register lesen"),
         F("06 - Register schreiben (16 Bit)"),
         F("16 - Register schreiben (16/32 Bit, Float)"),
     };
@@ -417,9 +442,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
       {
         FormSelectorOptions msel(NR_ELEMENTS(modeOpts), modeOpts);
-        msel.addFormSelector(F("Funktion"),
+        msel.addFormSelector(F("Funktionscode"),
                              getPluginCustomArgName(P156_ARG_MODE0 + i),
-                             p156_getMode(i, P156_PGROUPS));
+                             p156_rawToUi(p156_getMode(i, P156_PGROUPS), P156_FUNC));
       }
 
       {
@@ -448,7 +473,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
                              p156_getGroup(i, P156_PGROUPS));
       }
     }
-    addFormNote(F("Schreiben: Der Taskwert wird im Takt der Pause-Gruppe ins Register geschrieben. Wert setzen mit "
+    addFormNote(F("Funktionscode 06/16: Der Taskwert wird im Takt der Pause-Gruppe ins Register geschrieben. Wert setzen mit "
                   "[Taskname].MBSet,Wertnr,Wert (z.B. aus Rules oder /control?cmd=...). Nach dem Start wird erst "
                   "geschrieben, wenn ein Wert gesetzt wurde. 06 geht nur mit 16-Bit-Typen, sonst wird 16 verwendet."));
 
@@ -472,7 +497,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
     P156_PORT = getFormItemInt(P156_PORT_LBL);
     P156_UID = getFormItemInt(P156_UID_LBL);
-    P156_FUNC = getFormItemInt(P156_FUNC_LBL);
+    P156_FUNC = 0; // Lese-Funktionscode steht jetzt je Wert (siehe unten)
     P156_DT0 = getFormItemInt(P156_DT0_LBL);
     P156_DT1 = getFormItemInt(P156_DT1_LBL);
     P156_DT2 = getFormItemInt(P156_DT2_LBL);
@@ -506,10 +531,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         grp = 0;
       pack7 = p156_packGroup(pack7, i, grp);
 
-      uint8_t mode = (uint8_t)webArg(getPluginCustomArgName(P156_ARG_MODE0 + i)).toInt();
-      if (mode > P156_MODE_FC16)
-        mode = P156_MODE_READ;
-      pack7 = p156_packMode(pack7, i, mode);
+      const uint8_t ui = (uint8_t)webArg(getPluginCustomArgName(P156_ARG_MODE0 + i)).toInt();
+      pack7 = p156_packMode(pack7, i, p156_uiToRaw(ui));
     }
     P156_REGS01 = regs01;
     P156_REGS23 = regs23;
@@ -553,7 +576,6 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
     inst->port = (P156_PORT > 0) ? (uint16_t)P156_PORT : 502;
     inst->unitId = (P156_UID > 0) ? (uint8_t)P156_UID : 1;
-    inst->funcCode = (P156_FUNC == 1) ? 4 : 3;
 
     int dtArr[] = {P156_DT0, P156_DT1, P156_DT2, P156_DT3};
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
@@ -562,7 +584,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       inst->dataType[i] = (uint8_t)dtArr[i];
       inst->pauseGroup[i] = p156_getGroup(i, P156_PGROUPS);
       inst->values[i] = 0.0f;
-      inst->mode[i] = p156_getMode(i, P156_PGROUPS);
+      const uint8_t ui = p156_rawToUi(p156_getMode(i, P156_PGROUPS), P156_FUNC);
+      inst->mode[i] = (ui == 2) ? P156_MODE_FC6 : ((ui == 3) ? P156_MODE_FC16 : P156_MODE_READ);
+      inst->readFc[i] = (ui == 1) ? 4 : 3;
       if ((inst->mode[i] == P156_MODE_FC6) && (inst->dataType[i] >= P156_TYPE_U32))
         inst->mode[i] = P156_MODE_FC16; // 32 Bit / Float passen nicht in FC 06
       inst->lastOk[i] = NAN;
@@ -603,8 +627,13 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       log += inst->port;
       log += F(" Unit=0x");
       log += String(inst->unitId, HEX);
-      log += F(" Func=0");
-      log += inst->funcCode;
+      log += F(" FC=");
+      for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+      {
+        if (i > 0)
+          log += '/';
+        log += (inst->mode[i] == P156_MODE_FC6) ? 6 : ((inst->mode[i] == P156_MODE_FC16) ? 16 : inst->readFc[i]);
+      }
       log += F(" reg0=");
       log += inst->regAddr[0];
       addLogMove(LOG_LEVEL_INFO, log);
@@ -1037,7 +1066,7 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
   req[4] = 0;
   req[5] = 6;
   req[6] = inst->unitId;
-  req[7] = inst->funcCode;
+  req[7] = inst->readFc[qIdx];
   req[8] = (uint8_t)(inst->regAddr[qIdx] >> 8);
   req[9] = (uint8_t)inst->regAddr[qIdx];
   req[10] = 0;
