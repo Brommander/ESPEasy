@@ -277,6 +277,8 @@ struct P156_Instance : public PluginTaskData_base
   float lastOk[P156_NR_OUTPUT_VALUES] = {NAN, NAN, NAN, NAN}; // zuletzt erfolgreich zyklisch geschriebener Wert
   uint8_t lastErr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};      // letzter gemeldeter Fehlercode (0 = keiner)
   bool armed[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Schreibwert seit dem Start gesetzt
+  bool gotValue[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Lesewert seit dem Start mindestens einmal gelesen
+  uint32_t initTime = 0;                                               // Zeitpunkt von PLUGIN_INIT
   float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // Taskwert beim Start
   int connFd = -1;                // ESP32: Socket im Aufbau (-1 = kein Aufbau)
   uint32_t connStart = 0;          // Start des laufenden Aufbaus
@@ -593,6 +595,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       inst->lastErr[i] = 0;
       // Schreibwert: erst schreiben, wenn nach dem Start ein Wert gesetzt wurde (MBSet oder geänderter Taskwert)
       inst->armed[i] = false;
+      inst->gotValue[i] = false;
       inst->initVal[i] = UserVar.getFloat(event->TaskIndex, i);
     }
     const uint32_t def[] = {200, 1000, 10000, 60000};
@@ -602,8 +605,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       if (inst->pauseMs[g] < 50)
         inst->pauseMs[g] = def[g];
     }
+    // Alle Werte gleich nach dem Start einmal abfragen, nicht erst nach Ablauf ihrer Pausenzeit
+    inst->initTime = millis();
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
-      inst->lastSend[i] = millis();
+      inst->lastSend[i] = inst->initTime - inst->pauseMs[inst->pauseGroup[i]] - 1;
     inst->queryIndex = 0;
     inst->sendCount = 0;
     inst->errorCount = 0;
@@ -721,6 +726,17 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
     if (inst && inst->myInit)
     {
+      // Nach dem Start erst senden, wenn jeder aktive Lesewert einmal echt gelesen wurde
+      // (sonst gingen z. B. Zählerstände kurz als 0 an die Controller).
+      // Sicherheitsnetz: nach 2 Minuten wieder senden, auch wenn ein Register nie antwortet.
+      if (timePassedSince(inst->initTime) < 120000)
+      {
+        for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+        {
+          if ((inst->mode[i] == P156_MODE_READ) && (inst->regAddr[i] != 0) && !inst->gotValue[i])
+            return false;
+        }
+      }
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       {
         if (inst->mode[i] == P156_MODE_READ) // Schreibwerte behalten den gesetzten Taskwert
@@ -796,6 +812,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         inst->pendingQuery = 255;
         inst->errorCount = 0;
         inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
+        inst->gotValue[qIdx] = true;
         inst->lastSend[qIdx] = millis();
         inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
       }
