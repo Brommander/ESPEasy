@@ -58,6 +58,11 @@
 //  das Gerät danach keine gültige Antwort, wartet der nächste Versuch 1, 2, 4, 8, 16, dann 30 s.
 //  So bremst ein nicht erreichbares oder belegtes Gerät (z. B. Varta: nur ein Modbus-Client) das ESP nicht.
 //  ESP8266: weiterhin blockierender Aufbau (max. 500 ms), aber mit derselben Wartezeit.
+//  Blockweises Lesen: Ist ein Lesewert fällig, werden alle anderen Lesewerte mit demselben Funktionscode, die
+//  zusammen in höchstens 32 Registern liegen, in derselben Anfrage mitgelesen (zählen als frisch gelesen).
+//  Antwortet das Gerät auf einen Block mit einer Exception, wird für diesen Task wieder einzeln gelesen.
+//  Nach 3 Fehlversuchen in Folge stehen die Lesewerte lokal auf 0 (für Rules), an die Controller
+//  wird bis zur nächsten gültigen Antwort nichts gesendet.
 // #######################################################################################################
 
 #define PLUGIN_156
@@ -284,6 +289,17 @@ struct P156_Instance : public PluginTaskData_base
   uint32_t connStart = 0;          // Start des laufenden Aufbaus
   uint32_t nextConnectAllowed = 0; // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
   uint8_t connAttempts = 0;        // Verbindungsversuche seit der letzten gültigen Antwort
+  // Blockweises Lesen: eine Anfrage liest alle nahe beieinander liegenden Lesewerte
+  uint16_t blockStart = 0;         // erstes Register der laufenden Leseanfrage
+  uint8_t blockCount = 0;          // Anzahl Register
+  uint8_t blockFc = 3;             // Funktionscode 3 oder 4
+  uint8_t blockMask = 0;           // Bit i = Wert i ist in der Anfrage enthalten
+  bool noBlock = false;            // Gerät lehnt Blöcke ab -> Werte einzeln lesen
+  bool hdrRead = false;            // Kopf der Antwort schon gelesen
+  uint8_t hdr[9] = {};             // MBAP-Kopf + Funktionscode + Bytezahl/Exception
+  uint8_t exLogged = 0;            // Bit i = Exception für Wert i schon geloggt
+  uint32_t statRequests = 0;       // Leseanfragen seit dem Start
+  uint32_t statValues = 0;         // damit gelesene Werte
 
   ~P156_Instance()
   {
@@ -303,7 +319,9 @@ struct P156_Instance : public PluginTaskData_base
 #define P156_BACKOFF_MAX 30000
 
 bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx);
-bool p156_parseValues(P156_Instance *inst, uint8_t qIdx);
+uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode);
+void p156_buildBlock(P156_Instance *inst, uint8_t qIdx);
+void p156_deviceLost(P156_Instance *inst);
 int8_t p156_connect(P156_Instance *inst);
 void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, int err);
 bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err);
@@ -478,6 +496,23 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     addFormNote(F("Funktionscode 06/16: Der Taskwert wird im Takt der Pause-Gruppe ins Register geschrieben. Wert setzen mit "
                   "[Taskname].MBSet,Wertnr,Wert (z.B. aus Rules oder /control?cmd=...). Nach dem Start wird erst "
                   "geschrieben, wenn ein Wert gesetzt wurde. 06 geht nur mit 16-Bit-Typen, sonst wird 16 verwendet."));
+
+    {
+      // Status seit dem Start des Tasks
+      P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
+      if (inst)
+      {
+        addFormSubHeader(F("Status"));
+        addRowLabel(F("Leseanfragen"));
+        addHtmlInt(inst->statRequests);
+        addRowLabel(F("Gelesene Werte"));
+        addHtmlInt(inst->statValues);
+        addRowLabel(F("Blocklesen"));
+        addHtml(inst->noBlock ? F("aus (Geraet lehnt Bloecke ab, Werte einzeln)") : F("an"));
+        addRowLabel(F("Neuverbindungen"));
+        addHtmlInt(inst->reconnectCount);
+      }
+    }
 
     success = true;
     break;
@@ -742,6 +777,11 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         if (inst->mode[i] == P156_MODE_READ) // Schreibwerte behalten den gesetzten Taskwert
           UserVar.setFloat(event->TaskIndex, i, inst->values[i]);
       }
+      // Gerät seit mehreren Versuchen nicht erreichbar: Lesewerte stehen lokal auf 0 (Rules sehen
+      // "keine Leistung"), an die Controller wird aber nichts gesendet - eine 0 würde dort
+      // Zählerstände und Auswertungen verfälschen. Mit der ersten gültigen Antwort geht es weiter.
+      if (inst->connAttempts >= 3)
+        return false;
       success = true;
     }
     break;
@@ -806,32 +846,61 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     {
       // Phase 1: pending request — try to read response
       uint8_t qIdx = inst->pendingQuery;
-      bool ok = p156_parseValues(inst, qIdx);
-      if (ok)
+      uint8_t exCode = 0;
+      const uint8_t res = p156_parseBlock(inst, exCode);
+      if (res == 1)
       {
+        // alle Werte des Blocks sind frisch gelesen
         inst->pendingQuery = 255;
         inst->errorCount = 0;
         inst->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
-        inst->gotValue[qIdx] = true;
-        inst->lastSend[qIdx] = millis();
+        const uint32_t now = millis();
+        for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+        {
+          if (inst->blockMask & (1 << i))
+          {
+            inst->gotValue[i] = true;
+            inst->lastSend[i] = now;
+            inst->statValues++;
+          }
+        }
         inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
       }
-      else if (timePassedSince(inst->requestTime) > 500)
+      else if (res == 2)
       {
-        // Response timeout — give up, advance to next query
+        // Gerät antwortet mit Modbus-Exception
         inst->pendingQuery = 255;
+        inst->errorCount = 0;
+        inst->connAttempts = 0; // das Gerät antwortet – Verbindung ist in Ordnung
+        if (!inst->noBlock && (inst->blockMask & ~(1 << qIdx)))
+        {
+          // Block abgelehnt (z. B. nicht belegte Register in der Lücke): ab jetzt einzeln lesen, sofort erneut
+          inst->noBlock = true;
+          if (loglevelActiveFor(LOG_LEVEL_INFO))
+            addLogMove(LOG_LEVEL_INFO, strformat(F("P156: Geraet lehnt Blocklesen ab (Exception %d), lese Werte einzeln"), exCode));
+        }
+        else
+        {
+          inst->lastSend[qIdx] = millis();
+          inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
+          if (!(inst->exLogged & (1 << qIdx)) && loglevelActiveFor(LOG_LEVEL_ERROR))
+          {
+            inst->exLogged |= (1 << qIdx);
+            addLogMove(LOG_LEVEL_ERROR, strformat(F("P156: Wert %d (Register %u): Exception %d"), qIdx + 1, (unsigned)inst->regAddr[qIdx], exCode));
+          }
+        }
+      }
+      else if ((res == 3) || (timePassedSince(inst->requestTime) > 500))
+      {
+        // ungültige Antwort oder Timeout — give up, advance to next query
+        inst->pendingQuery = 255;
+        inst->hdrRead = false;
         inst->client.clear();
         inst->lastSend[qIdx] = millis();
         inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
         inst->errorCount++;
         if (inst->errorCount > 10)
-        {
-          inst->errorCount = 0;
-          inst->client.stop();
-          for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
-            inst->values[i] = 0.0f;
-          inst->reconnectCount++;
-        }
+          p156_deviceLost(inst);
       }
       // else: still within timeout window — wait, do nothing this cycle
     }
@@ -894,6 +963,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
             }
             break;
           }
+          p156_buildBlock(inst, qIdx);
           bool ok = (conn == P156_CONN_OK) && p156_sendRequest(inst, qIdx);
           if (ok)
           {
@@ -905,14 +975,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
             inst->lastSend[qIdx] = millis();
             inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
             if (inst->errorCount > 10)
-            {
-              inst->errorCount = 0;
-              inst->client.clear();
-              inst->client.stop();
-              for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
-                inst->values[i] = 0.0f;
-              inst->reconnectCount++;
-            }
+              p156_deviceLost(inst);
           }
           break;
         }
@@ -1074,7 +1137,8 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
     inst->sendCount = 1;
   else
     inst->sendCount++;
-  uint8_t regCount = (inst->dataType[qIdx] >= P156_TYPE_U32) ? 2 : 1;
+  (void)qIdx; // Register und Anzahl stehen in blockStart/blockCount (p156_buildBlock)
+  inst->hdrRead = false;
   byte req[12];
   req[0] = (uint8_t)(inst->sendCount >> 8);
   req[1] = (uint8_t)inst->sendCount;
@@ -1083,58 +1147,62 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
   req[4] = 0;
   req[5] = 6;
   req[6] = inst->unitId;
-  req[7] = inst->readFc[qIdx];
-  req[8] = (uint8_t)(inst->regAddr[qIdx] >> 8);
-  req[9] = (uint8_t)inst->regAddr[qIdx];
+  req[7] = inst->blockFc;
+  req[8] = (uint8_t)(inst->blockStart >> 8);
+  req[9] = (uint8_t)inst->blockStart;
   req[10] = 0;
-  req[11] = regCount;
+  req[11] = inst->blockCount;
   inst->requestTime = millis(); // record send time for response timeout
+  inst->statRequests++;
   inst->client.write(req, sizeof(req));
   return true;
 }
 
-bool p156_parseValues(P156_Instance *inst, uint8_t qIdx)
+// Anzahl Register eines Datentyps
+static uint8_t p156_regCount(uint8_t type)
 {
-  if (!inst)
-    return false;
+  return (type >= P156_TYPE_U32) ? 2 : 1;
+}
 
-  // Non-blocking: return false immediately if response not yet arrived.
-  // Timeout is handled by the caller (TEN_PER_SECOND Phase 1).
-  // minBytes: 9 header bytes + 2 (U16/S16) or 4 (U32+) data bytes
-  size_t available = inst->client.available();
-  const uint8_t minBytes = 9 + ((inst->dataType[qIdx] >= P156_TYPE_U32) ? 4 : 2);
-  if (available < minBytes)
-    return false;
+#define P156_BLOCK_MAX 32 // höchstens so viele Register in einer Leseanfrage
 
-  int avail = available; // use cached value
-  uint8_t dB = (inst->dataType[qIdx] >= P156_TYPE_U32) ? 4 : 2;
-  uint8_t tH = 0, tL = 0;
-
-  // Read header bytes (avail - dB), capture transaction ID from bytes 0-1
-  for (int a = 0; a < avail - dB; a++)
+// Leseanfrage für Wert qIdx zusammenstellen: alle anderen Lesewerte mit demselben Funktionscode,
+// die zusammen mit ihm in höchstens P156_BLOCK_MAX Registern liegen, werden mitgelesen.
+void p156_buildBlock(P156_Instance *inst, uint8_t qIdx)
+{
+  uint32_t start = inst->regAddr[qIdx];
+  uint32_t end = start + p156_regCount(inst->dataType[qIdx]) - 1;
+  uint8_t mask = (1 << qIdx);
+  if (!inst->noBlock)
   {
-    byte b = inst->client.read();
-    if (a == 0)
-      tH = b;
-    if (a == 1)
-      tL = b;
+    for (uint8_t j = 0; j < P156_NR_OUTPUT_VALUES; ++j)
+    {
+      if ((j == qIdx) || (inst->regAddr[j] == 0) || (inst->mode[j] != P156_MODE_READ) || (inst->readFc[j] != inst->readFc[qIdx]))
+        continue;
+      const uint32_t s2 = (inst->regAddr[j] < start) ? inst->regAddr[j] : start;
+      const uint32_t eJ = inst->regAddr[j] + p156_regCount(inst->dataType[j]) - 1;
+      const uint32_t e2 = (eJ > end) ? eJ : end;
+      if ((e2 - s2 + 1) <= P156_BLOCK_MAX)
+      {
+        start = s2;
+        end = e2;
+        mask |= (1 << j);
+      }
+    }
   }
-  if (inst->sendCount != (uint16_t)((tH << 8) | tL))
-  {
-    inst->client.clear();
-    return false;
-  }
-  uint8_t h1 = 0, l1 = 0, h2 = 0, l2 = 0;
-  if (dB > 0)
-    h1 = inst->client.read();
-  if (dB > 1)
-    l1 = inst->client.read();
-  if (dB > 2)
-    h2 = inst->client.read();
-  if (dB > 3)
-    l2 = inst->client.read();
+  inst->blockStart = (uint16_t)start;
+  inst->blockCount = (uint8_t)(end - start + 1);
+  inst->blockFc = inst->readFc[qIdx];
+  inst->blockMask = mask;
+}
+
+// Registerinhalt (2 oder 4 Bytes ab p) nach Datentyp umrechnen
+static float p156_decode(uint8_t type, const uint8_t *p)
+{
+  const uint8_t h1 = p[0], l1 = p[1];
+  const uint8_t h2 = (type >= P156_TYPE_U32) ? p[2] : 0, l2 = (type >= P156_TYPE_U32) ? p[3] : 0;
   float v = 0.0f;
-  switch (inst->dataType[qIdx])
+  switch (type)
   {
   case P156_TYPE_U16:
     v = (uint16_t)((h1 << 8) | l1);
@@ -1154,15 +1222,78 @@ bool p156_parseValues(P156_Instance *inst, uint8_t qIdx)
     memcpy(&v, b, sizeof(float));
     break;
   }
-  case P156_TYPE_U32WS: // Word-Swapped: h2/l2=HighWord, h1/l1=LowWord (Varta, Sungrow)
+  case P156_TYPE_U32WS: // Word-Swapped: h2/l2=HighWord, h1/l1=LowWord (Varta)
     v = (uint32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
     break;
   case P156_TYPE_S32WS:
     v = (int32_t)(((uint32_t)h2 << 24) | ((uint32_t)l2 << 16) | ((uint32_t)h1 << 8) | (uint32_t)l1);
     break;
   }
-  inst->values[qIdx] = v;
-  return true;
+  return v;
+}
+
+// Antwort auf die laufende Leseanfrage auswerten (nicht blockierend).
+// Rückgabe: 0 = noch nicht vollständig, 1 = OK (Werte übernommen), 2 = Modbus-Exception (exCode), 3 = ungültig
+uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
+{
+  if (!inst)
+    return 3;
+  if (!inst->hdrRead)
+  {
+    // Kopf: Transaktions-ID (2), Protokoll (2), Länge (2), Unit (1), Funktionscode (1), Bytezahl bzw. Exception-Code (1)
+    if (inst->client.available() < 9)
+      return 0;
+    for (uint8_t i = 0; i < 9; ++i)
+      inst->hdr[i] = inst->client.read();
+    if ((uint16_t)((inst->hdr[0] << 8) | inst->hdr[1]) != inst->sendCount)
+    {
+      inst->client.clear(); // Antwort auf eine ältere Anfrage
+      return 3;
+    }
+    if (inst->hdr[7] & 0x80)
+    {
+      exCode = inst->hdr[8];
+      return 2;
+    }
+    if ((inst->hdr[7] != inst->blockFc) || (inst->hdr[8] != inst->blockCount * 2))
+    {
+      inst->client.clear();
+      return 3;
+    }
+    inst->hdrRead = true;
+  }
+  const uint8_t n = inst->hdr[8];
+  if (inst->client.available() < n)
+    return 0;
+  uint8_t data[2 * P156_BLOCK_MAX];
+  for (uint8_t i = 0; i < n; ++i)
+    data[i] = inst->client.read();
+  inst->hdrRead = false;
+  for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+  {
+    if (!(inst->blockMask & (1 << i)))
+      continue;
+    const uint16_t off = (uint16_t)(inst->regAddr[i] - inst->blockStart) * 2;
+    if (off + 2u * p156_regCount(inst->dataType[i]) > n)
+      return 3;
+    inst->values[i] = p156_decode(inst->dataType[i], &data[off]);
+  }
+  return 1;
+}
+
+// Gerät antwortet seit mehreren Anfragen nicht: Verbindung neu aufbauen. Die Lesewerte stehen lokal auf 0,
+// an die Controller wird bis zur nächsten gültigen Antwort nichts gesendet (wie nach 3 Fehlversuchen beim Verbinden).
+void p156_deviceLost(P156_Instance *inst)
+{
+  inst->errorCount = 0;
+  inst->hdrRead = false;
+  inst->client.clear();
+  inst->client.stop();
+  for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
+    inst->values[i] = 0.0f;
+  if (inst->connAttempts < 3)
+    inst->connAttempts = 3;
+  inst->reconnectCount++;
 }
 
 // ============================================================
