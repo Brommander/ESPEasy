@@ -63,6 +63,8 @@
 //  unterwegs; wartet ein anderer Task, kommt er als Nächster dran. Transaktions-IDs werden je Verbindung vergeben.
 //  Blockweises Lesen: Ist ein Lesewert fällig, werden alle anderen Lesewerte mit demselben Funktionscode, die
 //  zusammen in höchstens 32 Registern liegen, in derselben Anfrage mitgelesen (zählen als frisch gelesen).
+//  Register anderer Tasks derselben Verbindung (gleiche Unit ID, gleicher Funktionscode) werden ebenfalls
+//  mitgelesen und an diese Tasks verteilt - mehrere Tasks für ein Gerät kosten so keine zusätzlichen Anfragen.
 //  Antwortet das Gerät auf einen Block mit einer Exception, wird für diesen Task wieder einzeln gelesen.
 //  Nach 3 Fehlversuchen in Folge stehen die Lesewerte lokal auf 0 (für Rules), an die Controller
 //  wird bis zur nächsten gültigen Antwort nichts gesendet.
@@ -254,6 +256,8 @@ struct P156_WriteJob
   uint8_t slot = 255; // Wert-Index bei zyklischem Schreiben, 255 = Befehl MBWrite
 };
 
+#define P156_CONN_MEMBERS 8 // so viele Tasks können sich eine Verbindung teilen
+
 struct P156_Instance : public PluginTaskData_base
 {
   taskIndex_t taskIndex = INVALID_TASK_INDEX;
@@ -286,6 +290,10 @@ struct P156_Instance : public PluginTaskData_base
   uint32_t initTime = 0;                                               // Zeitpunkt von PLUGIN_INIT
   float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // Taskwert beim Start
   struct P156_Conn *conn = nullptr; // gemeinsame Verbindung zum Gerät (IP + Port)
+  uint8_t connSlot = 255;           // Platz in conn->members
+  uint32_t connGen = 0;             // Kennung dieser Anmeldung an der Verbindung
+  uint8_t otherMask[P156_CONN_MEMBERS] = {}; // Werte anderer Tasks in der laufenden Anfrage (je Platz)
+  uint32_t otherGen[P156_CONN_MEMBERS] = {};  // Kennung des anderen Tasks beim Zusammenstellen
   // Blockweises Lesen: eine Anfrage liest alle nahe beieinander liegenden Lesewerte
   uint16_t blockStart = 0;         // erstes Register der laufenden Leseanfrage
   uint8_t blockCount = 0;          // Anzahl Register
@@ -317,6 +325,9 @@ struct P156_Conn
   taskIndex_t owner = INVALID_TASK_INDEX;     // Task mit laufender Anfrage
   taskIndex_t lastOwner = INVALID_TASK_INDEX; // Task der letzten Anfrage
   taskIndex_t waiting = INVALID_TASK_INDEX;   // Task, der auf die Verbindung wartet
+  P156_Instance *members[P156_CONN_MEMBERS] = {}; // Tasks dieser Verbindung (für gemeinsame Blöcke)
+  uint32_t memberGen[P156_CONN_MEMBERS] = {};
+  uint32_t gen = 0;
 
   ~P156_Conn()
   {
@@ -334,6 +345,8 @@ void p156_putConn(P156_Conn *c);
 uint16_t p156_nextTid(P156_Conn *c);
 bool p156_acquire(P156_Instance *inst);
 void p156_release(P156_Instance *inst);
+void p156_joinConn(P156_Instance *inst);
+bool p156_blockHasOthers(P156_Instance *inst, uint8_t qIdx);
 static P156_Conn *p156_conns[P156_MAX_CONN] = {};
 
 // Verbindung zu ip:port holen (vorhandene teilen oder neu anlegen)
@@ -416,10 +429,32 @@ void p156_release(P156_Instance *inst)
   }
 }
 
+// Task an der Verbindung anmelden (damit andere Tasks seine Register mitlesen können)
+void p156_joinConn(P156_Instance *inst)
+{
+  P156_Conn *c = inst->conn;
+  for (uint8_t i = 0; i < P156_CONN_MEMBERS; ++i)
+  {
+    if (c->members[i] == nullptr)
+    {
+      c->members[i] = inst;
+      c->memberGen[i] = ++c->gen;
+      inst->connSlot = i;
+      inst->connGen = c->memberGen[i];
+      return;
+    }
+  }
+}
+
 P156_Instance::~P156_Instance()
 {
   if (conn)
   {
+    if ((connSlot < P156_CONN_MEMBERS) && (conn->members[connSlot] == this))
+    {
+      conn->members[connSlot] = nullptr;
+      conn->memberGen[connSlot] = 0;
+    }
     if (conn->owner == taskIndex)
       conn->owner = INVALID_TASK_INDEX;
     if (conn->waiting == taskIndex)
@@ -781,6 +816,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     inst->writeCount = 0;
     inst->rxLen = 0;
     inst->myInit = true;
+    p156_joinConn(inst);
     success = true;
 
     if (loglevelActiveFor(LOG_LEVEL_INFO))
@@ -998,7 +1034,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         inst->pendingQuery = 255;
         inst->errorCount = 0;
         inst->conn->connAttempts = 0; // das Gerät antwortet – Verbindung ist in Ordnung
-        if (!inst->noBlock && (inst->blockMask & ~(1 << qIdx)))
+        if (!inst->noBlock && p156_blockHasOthers(inst, qIdx))
         {
           // Block abgelehnt (z. B. nicht belegte Register in der Lücke): ab jetzt einzeln lesen, sofort erneut
           inst->noBlock = true;
@@ -1317,10 +1353,44 @@ void p156_buildBlock(P156_Instance *inst, uint8_t qIdx)
       }
     }
   }
+  // Register anderer Tasks derselben Verbindung (gleiche Unit ID und gleicher Funktionscode) mitlesen
+  for (uint8_t k = 0; k < P156_CONN_MEMBERS; ++k)
+  {
+    inst->otherMask[k] = 0;
+    P156_Instance *m = inst->conn->members[k];
+    if (inst->noBlock || !m || (m == inst) || !m->myInit || m->noBlock || (m->unitId != inst->unitId))
+      continue;
+    for (uint8_t j = 0; j < P156_NR_OUTPUT_VALUES; ++j)
+    {
+      if ((m->regAddr[j] == 0) || (m->mode[j] != P156_MODE_READ) || (m->readFc[j] != inst->readFc[qIdx]))
+        continue;
+      const uint32_t s2 = (m->regAddr[j] < start) ? m->regAddr[j] : start;
+      const uint32_t eJ = m->regAddr[j] + p156_regCount(m->dataType[j]) - 1;
+      const uint32_t e2 = (eJ > end) ? eJ : end;
+      if ((e2 - s2 + 1) <= P156_BLOCK_MAX)
+      {
+        start = s2;
+        end = e2;
+        inst->otherMask[k] |= (1 << j);
+      }
+    }
+    inst->otherGen[k] = inst->conn->memberGen[k];
+  }
   inst->blockStart = (uint16_t)start;
   inst->blockCount = (uint8_t)(end - start + 1);
   inst->blockFc = inst->readFc[qIdx];
   inst->blockMask = mask;
+}
+
+// enthält die laufende Anfrage Werte außer qIdx (eigene oder anderer Tasks)?
+bool p156_blockHasOthers(P156_Instance *inst, uint8_t qIdx)
+{
+  if (inst->blockMask & ~(1 << qIdx))
+    return true;
+  for (uint8_t k = 0; k < P156_CONN_MEMBERS; ++k)
+    if (inst->otherMask[k])
+      return true;
+  return false;
 }
 
 // Registerinhalt (2 oder 4 Bytes ab p) nach Datentyp umrechnen
@@ -1404,6 +1474,28 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
     if (off + 2u * p156_regCount(inst->dataType[i]) > n)
       return 3;
     inst->values[i] = p156_decode(inst->dataType[i], &data[off]);
+  }
+  // Werte anderer Tasks aus derselben Antwort übernehmen
+  const uint32_t now = millis();
+  for (uint8_t k = 0; k < P156_CONN_MEMBERS; ++k)
+  {
+    if (!inst->otherMask[k])
+      continue;
+    P156_Instance *m = inst->conn->members[k];
+    if (!m || (inst->conn->memberGen[k] != inst->otherGen[k]) || !m->myInit)
+      continue; // Task wurde inzwischen neu gestartet
+    for (uint8_t j = 0; j < P156_NR_OUTPUT_VALUES; ++j)
+    {
+      if (!(inst->otherMask[k] & (1 << j)))
+        continue;
+      const uint16_t off = (uint16_t)(m->regAddr[j] - inst->blockStart) * 2;
+      if (off + 2u * p156_regCount(m->dataType[j]) > n)
+        continue;
+      m->values[j] = p156_decode(m->dataType[j], &data[off]);
+      m->gotValue[j] = true;
+      m->lastSend[j] = now;
+      m->statValues++;
+    }
   }
   return 1;
 }

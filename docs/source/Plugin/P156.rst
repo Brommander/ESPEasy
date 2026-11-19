@@ -122,6 +122,10 @@ request (one Modbus request can return several registers). These values count as
 freshly read, so they do not need a request of their own. Values that are close
 together in the register map are therefore read with one request at the rate of
 the fastest of them, and all values of the request are from the same moment.
+Registers of other tasks that use the same connection (same IP address and
+port), the same Unit ID and the same read function are included as well, and the
+result is handed to these tasks. A device can therefore be read with several
+tasks without additional requests.
 If the device rejects a block (for example because registers in a gap are not
 defined), the task reads its values one by one from then on. The status block
 in the task settings shows the number of requests and values read.
@@ -378,8 +382,9 @@ Unit ID 1 in the test).
   "3", "1068", "03", "S16", "3 (10 s)", "Charge_Level", "%"
   "4", "1069", "03", "U32 WS", "4 (60 s)", "Charge_Energy", "Wh"
 
-A second task with the same IP and port can read further registers; both tasks
-share one connection to the Varta, e.g.:
+A second task with the same IP, port and Unit ID can read further registers.
+Both tasks share one connection to the Varta, and registers 1065-1078 are read
+with one request for both tasks, e.g.:
 
 .. csv-table::
   :header: "Register", "Data type", "Content", "Unit"
@@ -442,7 +447,8 @@ Change log
   No values are sent after startup until all read values were received once,
   and no values are sent while the device is unreachable.
   Block reading of neighbouring registers, status block in the task settings.
-  Tasks with the same IP and port share one connection.
+  Tasks with the same IP and port share one connection; registers of all
+  tasks of a connection are read in common blocks.
 
 .. versionadded:: 1.1
   ...
