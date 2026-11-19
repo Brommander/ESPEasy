@@ -16,6 +16,7 @@
 //    [2] FuncCode-Index (0=Func03, 1=Func04)
 //    [3-6] Datentyp Query 0-3 (0=U16,1=S16,2=U32,3=S32,4=Float)
 //    [7] Pause-Gruppen gepackt (bits 0-1=Q0, 2-3=Q1, 4-5=Q2, 6-7=Q3)
+//        Funktion je Wert (bits 8-9=Q0, 10-11=Q1, 12-13=Q2, 14-15=Q3): 0=Lesen, 1=FC06 schreiben, 2=FC16 schreiben
 //  PCONFIG_LONG:
 //    [0] IP als uint32
 //    [1] reg0(bits0-15) | reg1(bits16-31)
@@ -26,6 +27,14 @@
 //    [1..4] = Registeradresse Query 0..3
 //    [5..8] = Pausezeit Gruppe 1..4 (ms)
 //    [9..12]= Pause-Gruppe Query 0..3
+//    [13..16]= Funktion Query 0..3
+//
+//  Zyklisch schreiben (Funktion "06 schreiben" / "16 schreiben" bei einem Wert):
+//    Der Taskwert wird im Takt seiner Pause-Gruppe in das Register geschrieben (Datentyp wie eingestellt).
+//    Wert setzen: [<TaskName>].MBSet,<Wertnr 1-4>,<Wert>  (Rules, HTTP /control?cmd=..., MQTT <sysname>/cmd)
+//    oder TaskValueSet (nur wenn "Allow TaskValueSet on all plugins" in den Advanced Settings an ist).
+//    Nach dem Start wird nichts geschrieben, bis ein Wert gesetzt wurde.
+//    Rules-Event WriteOK nur bei geändertem Wert oder nach einem Fehler, WriteError bei jedem Fehler.
 //
 //  Schreiben (Befehl, z. B. aus Rules, HTTP /control?cmd=... oder MQTT <sysname>/cmd):
 //    [<TaskName>].MBWrite,<Register>,<Wert>[,<Datentyp>[,<FC>]]
@@ -56,6 +65,11 @@
 #define P156_ARG_REG0 1
 #define P156_ARG_PAU1 5
 #define P156_ARG_GRP0 9
+#define P156_ARG_MODE0 13
+
+#define P156_MODE_READ 0
+#define P156_MODE_FC6 1
+#define P156_MODE_FC16 2
 
 #define P156_PORT PCONFIG(0)
 #define P156_PORT_LBL PCONFIG_LABEL(0)
@@ -109,6 +123,20 @@ static int16_t p156_packGroup(int16_t packed, uint8_t qIdx, uint8_t group)
   packed &= ~(0x03 << (qIdx * 2));
   packed |= ((group & 0x03) << (qIdx * 2));
   return packed;
+}
+
+static uint8_t p156_getMode(uint8_t qIdx, int16_t pg)
+{
+  const uint8_t m = (uint8_t)((((uint16_t)pg) >> (8 + qIdx * 2)) & 0x03);
+  return (m > P156_MODE_FC16) ? P156_MODE_READ : m;
+}
+
+static int16_t p156_packMode(int16_t packed, uint8_t qIdx, uint8_t mode)
+{
+  uint16_t p = (uint16_t)packed;
+  p &= ~(0x03 << (8 + qIdx * 2));
+  p |= ((mode & 0x03) << (8 + qIdx * 2));
+  return (int16_t)p;
 }
 
 static uint16_t p156_getReg(uint8_t qIdx, int32_t r01, int32_t r23)
@@ -183,6 +211,7 @@ struct P156_WriteJob
   uint8_t nRegs = 1;
   uint8_t fc = 6;
   double value = 0.0; // nur für Event/Log
+  uint8_t slot = 255; // Wert-Index bei zyklischem Schreiben, 255 = Befehl MBWrite
 };
 
 struct P156_Instance : public PluginTaskData_base
@@ -212,7 +241,12 @@ struct P156_Instance : public PluginTaskData_base
   uint32_t requestTime = 0;                                // time when pending request was sent (0 = none)
   uint8_t pendingQuery = 255;                              // query index of pending request (255 = none)
   float values[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
-  int connFd = -1;                 // ESP32: Socket im Aufbau (-1 = kein Aufbau)
+  uint8_t mode[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};          // P156_MODE_*
+  float lastOk[P156_NR_OUTPUT_VALUES] = {NAN, NAN, NAN, NAN}; // zuletzt erfolgreich zyklisch geschriebener Wert
+  uint8_t lastErr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};      // letzter gemeldeter Fehlercode (0 = keiner)
+  bool armed[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Schreibwert seit dem Start gesetzt
+  float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // Taskwert beim Start
+  int connFd = -1;                // ESP32: Socket im Aufbau (-1 = kein Aufbau)
   uint32_t connStart = 0;          // Start des laufenden Aufbaus
   uint32_t nextConnectAllowed = 0; // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
   uint8_t connAttempts = 0;        // Verbindungsversuche seit der letzten gültigen Antwort
@@ -239,6 +273,7 @@ bool p156_parseValues(P156_Instance *inst, uint8_t qIdx);
 int8_t p156_connect(P156_Instance *inst);
 void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, int err);
 bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err);
+bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err);
 bool p156_sendWrite(P156_Instance *inst);
 uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode);
 void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t code);
@@ -365,6 +400,11 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         F("Gruppe 3"),
         F("Gruppe 4"),
     };
+    const __FlashStringHelper *modeOpts[] = {
+        F("Lesen (Funktionscode oben: 03/04)"),
+        F("06 - Register schreiben (16 Bit)"),
+        F("16 - Register schreiben (16/32 Bit, Float)"),
+    };
 
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
@@ -373,7 +413,14 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       char buf[8];
       snprintf(buf, sizeof(buf), "%u", p156_getReg(i, P156_REGS01, P156_REGS23));
       addFormTextBox(F("Registeradresse"), getPluginCustomArgName(P156_ARG_REG0 + i), buf, 6);
-      addFormNote(F("PDU-Adresse 0-65535. 4xxxxx-Notation: Adresse minus 400001"));
+      addFormNote(F("PDU-Adresse 1-65535 (0 = Wert aus). 4xxxxx-Notation: Adresse minus 400001"));
+
+      {
+        FormSelectorOptions msel(NR_ELEMENTS(modeOpts), modeOpts);
+        msel.addFormSelector(F("Funktion"),
+                             getPluginCustomArgName(P156_ARG_MODE0 + i),
+                             p156_getMode(i, P156_PGROUPS));
+      }
 
       {
         FormSelectorOptions tsel(NR_ELEMENTS(dtOpts), dtOpts);
@@ -401,6 +448,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
                              p156_getGroup(i, P156_PGROUPS));
       }
     }
+    addFormNote(F("Schreiben: Der Taskwert wird im Takt der Pause-Gruppe ins Register geschrieben. Wert setzen mit "
+                  "[Taskname].MBSet,Wertnr,Wert (z.B. aus Rules oder /control?cmd=...). Nach dem Start wird erst "
+                  "geschrieben, wenn ein Wert gesetzt wurde. 06 geht nur mit 16-Bit-Typen, sonst wird 16 verwendet."));
 
     success = true;
     break;
@@ -455,6 +505,11 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       if (grp > 3)
         grp = 0;
       pack7 = p156_packGroup(pack7, i, grp);
+
+      uint8_t mode = (uint8_t)webArg(getPluginCustomArgName(P156_ARG_MODE0 + i)).toInt();
+      if (mode > P156_MODE_FC16)
+        mode = P156_MODE_READ;
+      pack7 = p156_packMode(pack7, i, mode);
     }
     P156_REGS01 = regs01;
     P156_REGS23 = regs23;
@@ -507,6 +562,14 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       inst->dataType[i] = (uint8_t)dtArr[i];
       inst->pauseGroup[i] = p156_getGroup(i, P156_PGROUPS);
       inst->values[i] = 0.0f;
+      inst->mode[i] = p156_getMode(i, P156_PGROUPS);
+      if ((inst->mode[i] == P156_MODE_FC6) && (inst->dataType[i] >= P156_TYPE_U32))
+        inst->mode[i] = P156_MODE_FC16; // 32 Bit / Float passen nicht in FC 06
+      inst->lastOk[i] = NAN;
+      inst->lastErr[i] = 0;
+      // Schreibwert: erst schreiben, wenn nach dem Start ein Wert gesetzt wurde (MBSet oder geänderter Taskwert)
+      inst->armed[i] = false;
+      inst->initVal[i] = UserVar.getFloat(event->TaskIndex, i);
     }
     const uint32_t def[] = {200, 1000, 10000, 60000};
     for (uint8_t g = 0; g < P156_NR_PAUSE_GROUPS; ++g)
@@ -564,6 +627,42 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   case PLUGIN_WRITE:
   {
     const String command = parseString(string, 1);
+    if (equals(command, F("mbset")))
+    {
+      // MBSet,<Wertnr 1-4>,<Wert>: Schreibwert setzen (wird im Takt der Pause-Gruppe geschrieben)
+      success = true;
+      P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
+      int32_t nr = 0;
+      ESPEASY_RULES_FLOAT_TYPE d = 0;
+      String err;
+      if (!inst || !inst->myInit)
+        err = F("Task nicht initialisiert");
+      else if (!validIntFromString(parseString(string, 2), nr) || (nr < 1) || (nr > P156_NR_OUTPUT_VALUES))
+        err = F("Wertnummer muss 1-4 sein");
+      else if (inst->mode[nr - 1] == P156_MODE_READ)
+        err = F("Wert ist auf Lesen eingestellt");
+      else if (!validDoubleFromString(parseStringKeepCase(string, 3), d))
+        err = F("ungültiger Wert");
+      else
+      {
+        P156_WriteJob test;
+        if (p156_encodeValue(d, inst->dataType[nr - 1], test, err))
+        {
+          UserVar.setFloat(event->TaskIndex, nr - 1, (float)d);
+          inst->armed[nr - 1] = true;
+        }
+      }
+      if (!err.isEmpty() && loglevelActiveFor(LOG_LEVEL_ERROR))
+      {
+        String l = F("P156 MBSet: ");
+        l += err;
+        l += F(" (");
+        l += string;
+        l += ')';
+        addLogMove(LOG_LEVEL_ERROR, l);
+      }
+      break;
+    }
     if (!equals(command, F("mbwrite")))
       break;
     success = true; // Befehl gehört zu P156 – Fehler werden geloggt, nicht an andere Plugins weitergereicht
@@ -594,7 +693,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (inst && inst->myInit)
     {
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
-        UserVar.setFloat(event->TaskIndex, i, inst->values[i]);
+      {
+        if (inst->mode[i] == P156_MODE_READ) // Schreibwerte behalten den gesetzten Taskwert
+          UserVar.setFloat(event->TaskIndex, i, inst->values[i]);
+      }
       success = true;
     }
     break;
@@ -702,9 +804,50 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         }
         if (timePassedSince(inst->lastSend[qIdx]) >= inst->pauseMs[group])
         {
+          P156_WriteJob cyc;
+          if (inst->mode[qIdx] != P156_MODE_READ)
+          {
+            // Zyklisch schreiben: Taskwert holen und kodieren (vor dem Verbindungsaufbau)
+            const float v = UserVar.getFloat(event->TaskIndex, qIdx);
+            if (!inst->armed[qIdx] && (v != inst->initVal[qIdx]) && !isnan(v))
+              inst->armed[qIdx] = true; // Taskwert wurde geändert (z. B. TaskValueSet)
+            String err;
+            if (!inst->armed[qIdx] || isnan(v) || !p156_encodeValue(v, inst->dataType[qIdx], cyc, err))
+            {
+              if (!err.isEmpty() && loglevelActiveFor(LOG_LEVEL_ERROR))
+              {
+                String l = F("P156 Schreibwert ");
+                l += qIdx + 1;
+                l += F(": ");
+                l += err;
+                addLogMove(LOG_LEVEL_ERROR, l);
+              }
+              inst->lastSend[qIdx] = millis(); // noch kein (gültiger) Wert – nächste Runde
+              inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
+              break;
+            }
+            cyc.reg = (uint16_t)inst->regAddr[qIdx];
+            cyc.fc = (inst->mode[qIdx] == P156_MODE_FC6) ? 6 : 16;
+            cyc.slot = qIdx;
+          }
+
           const int8_t conn = p156_connect(inst);
           if ((conn == P156_CONN_BUSY) || (conn == P156_CONN_WAIT))
             break; // Aufbau läuft oder Wartezeit – nichts blockieren, später erneut
+          if (inst->mode[qIdx] != P156_MODE_READ)
+          {
+            inst->lastSend[qIdx] = millis();
+            inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
+            inst->activeWrite = cyc;
+            if ((conn == P156_CONN_OK) && p156_sendWrite(inst))
+              inst->pendingQuery = P156_PENDING_WRITE;
+            else
+            {
+              inst->errorCount++;
+              p156_writeResult(inst, inst->activeWrite, P156_WERR_CONNECT);
+            }
+            break;
+          }
           bool ok = (conn == P156_CONN_OK) && p156_sendRequest(inst, qIdx);
           if (ok)
           {
@@ -1033,7 +1176,44 @@ bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
   }
 
   P156_WriteJob job;
+  if (!p156_encodeValue(d, type, job, err))
+    return false;
   job.reg = (uint16_t)reg;
+
+  const String fcStr = parseString(cmd, 5);
+  if (fcStr.isEmpty())
+    job.fc = (job.nRegs == 1) ? 6 : 16;
+  else
+  {
+    int32_t fc = 0;
+    if (!validIntFromString(fcStr, fc) || ((fc != 6) && (fc != 16)))
+    {
+      err = F("FC muss 6 oder 16 sein");
+      return false;
+    }
+    if ((fc == 6) && (job.nRegs != 1))
+    {
+      err = F("FC 6 nur für 16-Bit-Typen");
+      return false;
+    }
+    job.fc = (uint8_t)fc;
+  }
+
+  if (inst->writeCount >= P156_WRITE_QUEUE)
+  {
+    err = F("Warteschlange voll");
+    p156_writeResult(inst, job, P156_WERR_QUEUE_FULL);
+    return false;
+  }
+  const uint8_t slot = (inst->writeHead + inst->writeCount) % P156_WRITE_QUEUE;
+  inst->writeQueue[slot] = job;
+  inst->writeCount++;
+  return true;
+}
+
+// Wert in 1 oder 2 Registerworte umsetzen (Bereich wird geprüft). Setzt value, nRegs, words.
+bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
+{
   job.value = d;
   uint32_t u = 0;
   switch (type)
@@ -1097,35 +1277,6 @@ bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
       job.words[1] = (uint16_t)(u & 0xFFFF);
     }
   }
-
-  const String fcStr = parseString(cmd, 5);
-  if (fcStr.isEmpty())
-    job.fc = (job.nRegs == 1) ? 6 : 16;
-  else
-  {
-    int32_t fc = 0;
-    if (!validIntFromString(fcStr, fc) || ((fc != 6) && (fc != 16)))
-    {
-      err = F("FC muss 6 oder 16 sein");
-      return false;
-    }
-    if ((fc == 6) && (job.nRegs != 1))
-    {
-      err = F("FC 6 nur für 16-Bit-Typen");
-      return false;
-    }
-    job.fc = (uint8_t)fc;
-  }
-
-  if (inst->writeCount >= P156_WRITE_QUEUE)
-  {
-    err = F("Warteschlange voll");
-    p156_writeResult(inst, job, P156_WERR_QUEUE_FULL);
-    return false;
-  }
-  const uint8_t slot = (inst->writeHead + inst->writeCount) % P156_WRITE_QUEUE;
-  inst->writeQueue[slot] = job;
-  inst->writeCount++;
   return true;
 }
 
@@ -1220,6 +1371,26 @@ uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode)
 
 void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t code)
 {
+  if (job.slot < P156_NR_OUTPUT_VALUES)
+  {
+    // Zyklisches Schreiben: OK nur melden, wenn sich der Wert geändert hat oder vorher ein Fehler war
+    const float v = (float)job.value;
+    if (code == 0)
+    {
+      inst->lastErr[job.slot] = 0;
+      if (v == inst->lastOk[job.slot])
+        return;
+      inst->lastOk[job.slot] = v;
+    }
+    else
+    {
+      inst->lastOk[job.slot] = NAN;
+      if (code == inst->lastErr[job.slot])
+        return; // derselbe Fehler wie beim letzten Mal – nicht in jedem Takt melden
+      inst->lastErr[job.slot] = code;
+    }
+  }
+
   const String taskName = getTaskDeviceName(inst->taskIndex);
   const String valStr = doubleToString(job.value, 3, true);
 
@@ -1228,7 +1399,7 @@ void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t cod
     // Register wird gelesen? Dann sofort neu lesen, damit der Taskwert stimmt
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
-      if ((inst->regAddr[i] != 0) && (inst->regAddr[i] == job.reg))
+      if ((inst->mode[i] == P156_MODE_READ) && (inst->regAddr[i] != 0) && (inst->regAddr[i] == job.reg))
         inst->lastSend[i] = millis() - inst->pauseMs[inst->pauseGroup[i]] - 1;
     }
   }
