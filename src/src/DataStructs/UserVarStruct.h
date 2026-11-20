@@ -136,6 +136,11 @@ struct UserVarStruct {
 
   void                     markPluginRead(taskIndex_t taskIndex);
 
+  // Call after the raw values of a task were replaced directly (e.g. received via P2P),
+  // so values with a formula are computed from the new raw values.
+  void                     rawTaskValuesUpdated(taskIndex_t  taskIndex,
+                                                Sensor_VType sensorType);
+
 private:
 
   const TaskValues_Data_t* getRawOrComputed(taskIndex_t    taskIndex,

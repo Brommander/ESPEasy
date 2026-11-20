@@ -356,6 +356,24 @@ void UserVarStruct::clear_computed(taskIndex_t taskIndex)
   }
 }
 
+void UserVarStruct::rawTaskValuesUpdated(taskIndex_t taskIndex, Sensor_VType sensorType)
+{
+  if (!validTaskIndex(taskIndex)) {
+    return;
+  }
+
+  for (taskVarIndex_t varNr = 0; validTaskVarIndex(varNr); ++varNr) {
+    if (Cache.hasFormula(taskIndex, varNr)) {
+      // Same as a regular set: the cached result is invalidated,
+      // or computed right away when the formula uses %pvalue%
+      const uint8_t  nrDecimals = 254;
+      constexpr bool raw        = true;
+      constexpr bool applyNow   = false;
+      applyFormula(taskIndex, varNr, getAsString(taskIndex, varNr, sensorType, nrDecimals, raw), sensorType, applyNow);
+    }
+  }
+}
+
 void UserVarStruct::markPluginRead(taskIndex_t taskIndex)
 {
   struct EventStruct TempEvent(taskIndex);

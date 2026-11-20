@@ -395,6 +395,7 @@ void C013_Receive(struct EventStruct *event) {
 
               if (taskValues != nullptr) {
                 memcpy(taskValues->binary, dataReply->taskValues_Data, sizeof(dataReply->taskValues_Data));
+                UserVar.rawTaskValuesUpdated(dataReply->destTaskIndex, sensorType);
               }
               STOP_TIMER(C013_RECEIVE_SENSOR_DATA);
 
