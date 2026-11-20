@@ -13,61 +13,61 @@
 //  PCONFIG:
 //    [0] Port
 //    [1] Unit ID
-//    [2] alter gemeinsamer Lese-Funktionscode (0=Func03, 1=Func04). Nur noch für alte Konfigurationen:
-//        "Lesen 03" (Funktion 0) liest mit 04, wenn hier 1 steht. Beim Speichern wird er auf 0 gesetzt.
-//    [3-6] Datentyp Query 0-3 (0=U16,1=S16,2=U32,3=S32,4=Float)
-//    [7] Pause-Gruppen gepackt (bits 0-1=Q0, 2-3=Q1, 4-5=Q2, 6-7=Q3)
-//        Funktion je Wert (bits 8-9=Q0, 10-11=Q1, 12-13=Q2, 14-15=Q3):
-//          0=03 lesen, 1=06 schreiben, 2=16 schreiben, 3=04 lesen
+//    [2] Old common read function code (0=Func03, 1=Func04). Only used by old configurations:
+//        "Read 03" (function 0) reads with 04 if this is 1. It is set to 0 on save.
+//    [3-6] Data type query 0-3 (0=U16,1=S16,2=U32,3=S32,4=Float)
+//    [7] Pause groups packed (bits 0-1=Q0, 2-3=Q1, 4-5=Q2, 6-7=Q3)
+//        Function per value (bits 8-9=Q0, 10-11=Q1, 12-13=Q2, 14-15=Q3):
+//          0=03 read, 1=06 write, 2=16 write, 3=04 read
 //  PCONFIG_LONG:
-//    [0] IP als uint32
+//    [0] IP as uint32
 //    [1] reg0(bits0-15) | reg1(bits16-31)
 //    [2] reg2(bits0-15) | reg3(bits16-31)
 //    [3] pause1(8b,x100ms)|pause2(8b,x100ms)|pause3(8b,x1000ms)|pause4(8b,x1000ms)
-//  getPluginCustomArgName (max Index 12):
+//  getPluginCustomArgName (index 0..16):
 //    [0]    = IP
-//    [1..4] = Registeradresse Query 0..3
-//    [5..8] = Pausezeit Gruppe 1..4 (ms)
-//    [9..12]= Pause-Gruppe Query 0..3
-//    [13..16]= Funktion Query 0..3
+//    [1..4] = Register address query 0..3
+//    [5..8] = Pause time group 1..4 (ms)
+//    [9..12]= Pause group query 0..3
+//    [13..16]= Function query 0..3
 //
-//  Funktionscode je Wert: 03/04 = lesen, 06/16 = zyklisch schreiben.
-//  Zyklisch schreiben (Funktionscode 06 oder 16 bei einem Wert):
-//    Der Taskwert wird im Takt seiner Pause-Gruppe in das Register geschrieben (Datentyp wie eingestellt).
-//    Wert setzen: [<TaskName>].MBSet,<Wertnr 1-4>,<Wert>  (Rules, HTTP /control?cmd=..., MQTT <sysname>/cmd)
-//    oder TaskValueSet (nur wenn "Allow TaskValueSet on all plugins" in den Advanced Settings an ist).
-//    Nach dem Start wird nichts geschrieben, bis ein Wert gesetzt wurde.
-//    Rules-Event WriteOK nur bei geändertem Wert oder nach einem Fehler, WriteError bei jedem Fehler.
+//  Function code per value: 03/04 = read, 06/16 = write cyclically.
+//  Cyclic writing (function code 06 or 16 for a value):
+//    The task value is written to the register in the interval of its pause group (data type as configured).
+//    Set the value: [<TaskName>].MBSet,<value nr 1-4>,<value>  (rules, HTTP /control?cmd=..., MQTT <sysname>/cmd)
+//    or TaskValueSet (only if "Allow TaskValueSet on all plugins" is enabled in the Advanced Settings).
+//    After start nothing is written until a value has been set.
+//    Rules event WriteOK only when the value changed or after an error, WriteError on every error.
 //
-//  Schreiben (Befehl, z. B. aus Rules, HTTP /control?cmd=... oder MQTT <sysname>/cmd):
-//    [<TaskName>].MBWrite,<Register>,<Wert>[,<Datentyp>[,<FC>]]
-//      Datentyp: u16, s16, u32, s32, float, u32ws, s32ws (oder 0..6).
-//                Ohne Angabe: Datentyp der Query mit diesem Register, sonst u16.
-//      FC:       6 (Write Single Register) oder 16 (Write Multiple Registers).
-//                Ohne Angabe: 6 bei 16-Bit-Typen, 16 bei 32-Bit-Typen.
-//    Ohne [<TaskName>]. wirkt der Befehl auf den ersten aktiven P156-Task.
-//    Schreibaufträge haben Vorrang vor dem Lesen (Warteschlange mit 4 Plätzen).
-//    Ergebnis als Rules-Event:
-//      <TaskName>#WriteOK=<Register>,<Wert>
-//      <TaskName>#WriteError=<Register>,<Code>
-//        Code 1..11 = Modbus-Exception, 253 = Warteschlange voll,
-//        254 = keine Verbindung, 255 = keine/ungültige Antwort (Timeout 500 ms)
+//  Writing (command, e.g. from rules, HTTP /control?cmd=... or MQTT <sysname>/cmd):
+//    [<TaskName>].MBWrite,<register>,<value>[,<data type>[,<FC>]]
+//      Data type: u16, s16, u32, s32, float, u32ws, s32ws (or 0..6).
+//                 Default: data type of the query with this register, otherwise u16.
+//      FC:        6 (Write Single Register) or 16 (Write Multiple Registers).
+//                 Default: 6 for 16-bit types, 16 for 32-bit types.
+//    Without [<TaskName>]. the command applies to the first active P156 task.
+//    Write jobs have priority over reading (queue with 4 entries).
+//    Result as rules event:
+//      <TaskName>#WriteOK=<register>,<value>
+//      <TaskName>#WriteError=<register>,<code>
+//        Code 1..11 = Modbus exception, 253 = queue full,
+//        254 = no connection, 255 = no/invalid response (timeout 500 ms)
 //
-//  Verbindungsaufbau (ESP32): nicht blockierend. connect() kehrt sofort zurück, der Ausgang wird in
-//  den folgenden 100-ms-Takten ohne Warten geprüft (Timeout 1 s). Schlägt der Aufbau fehl oder liefert
-//  das Gerät danach keine gültige Antwort, wartet der nächste Versuch 1, 2, 4, 8, 16, dann 30 s.
-//  So bremst ein nicht erreichbares oder belegtes Gerät (z. B. Varta: nur ein Modbus-Client) das ESP nicht.
-//  ESP8266: weiterhin blockierender Aufbau (max. 500 ms), aber mit derselben Wartezeit.
-//  Gemeinsame Verbindung: Alle P156-Tasks mit derselben IP und demselben Port nutzen eine TCP-Verbindung
-//  (viele Geräte, z. B. Varta, erlauben nur sehr wenige Modbus-Clients). Je Verbindung ist immer nur eine Anfrage
-//  unterwegs; wartet ein anderer Task, kommt er als Nächster dran. Transaktions-IDs werden je Verbindung vergeben.
-//  Blockweises Lesen: Ist ein Lesewert fällig, werden alle anderen Lesewerte mit demselben Funktionscode, die
-//  zusammen in höchstens 32 Registern liegen, in derselben Anfrage mitgelesen (zählen als frisch gelesen).
-//  Register anderer Tasks derselben Verbindung (gleiche Unit ID, gleicher Funktionscode) werden ebenfalls
-//  mitgelesen und an diese Tasks verteilt - mehrere Tasks für ein Gerät kosten so keine zusätzlichen Anfragen.
-//  Antwortet das Gerät auf einen Block mit einer Exception, wird für diesen Task wieder einzeln gelesen.
-//  Nach 3 Fehlversuchen in Folge stehen die Lesewerte lokal auf 0 (für Rules), an die Controller
-//  wird bis zur nächsten gültigen Antwort nichts gesendet.
+//  Connecting (ESP32): non-blocking. connect() returns at once, the result is checked in the
+//  following 100 ms cycles without waiting (timeout 1 s). If the connect fails or the device then
+//  sends no valid response, the next attempt waits 1, 2, 4, 8, 16, then 30 s.
+//  So a device that is unreachable or busy (e.g. one that allows only one Modbus client) does not slow down the ESP.
+//  ESP8266: blocking connect (max. 500 ms), but with the same wait times.
+//  Shared connection: all P156 tasks with the same IP and port use one TCP connection
+//  (many devices allow only very few Modbus clients). Only one request per connection is on the
+//  wire; if another task is waiting, it is served next. Transaction IDs are assigned per connection.
+//  Block reading: when a read value is due, all other read values with the same function code that
+//  lie within 32 registers together are read in the same request (they count as freshly read).
+//  Registers of other tasks of the same connection (same unit ID, same function code) are read as
+//  well and handed to these tasks - several tasks for one device need no additional requests.
+//  If the device answers a block with an exception, this task reads its values one by one again.
+//  After 3 failed attempts in a row the read values are 0 locally (for rules); nothing is sent to
+//  the controllers until the next valid response.
 // #######################################################################################################
 
 #define PLUGIN_156
@@ -83,7 +83,7 @@
 #define P156_MODE_READ 0
 #define P156_MODE_FC6 1
 #define P156_MODE_FC16 2
-#define P156_MODE_RAW_READ04 3 // nur gespeichert; intern P156_MODE_READ mit readFc = 4
+#define P156_MODE_RAW_READ04 3 // stored only; internally P156_MODE_READ with readFc = 4
 
 #define P156_PORT PCONFIG(0)
 #define P156_PORT_LBL PCONFIG_LABEL(0)
@@ -141,10 +141,10 @@ static int16_t p156_packGroup(int16_t packed, uint8_t qIdx, uint8_t group)
 
 static uint8_t p156_getMode(uint8_t qIdx, int16_t pg)
 {
-  return (uint8_t)((((uint16_t)pg) >> (8 + qIdx * 2)) & 0x03); // gespeicherter Rohwert 0..3
+  return (uint8_t)((((uint16_t)pg) >> (8 + qIdx * 2)) & 0x03); // stored raw value 0..3
 }
 
-// Auswahl im Formular: 0=03 lesen, 1=04 lesen, 2=06 schreiben, 3=16 schreiben
+// Selection in the form: 0=03 read, 1=04 read, 2=06 write, 3=16 write
 static uint8_t p156_rawToUi(uint8_t raw, int16_t oldFunc)
 {
   switch (raw)
@@ -156,7 +156,7 @@ static uint8_t p156_rawToUi(uint8_t raw, int16_t oldFunc)
   case P156_MODE_RAW_READ04:
     return 1;
   }
-  return (oldFunc == 1) ? 1 : 0; // alte Konfiguration mit gemeinsamem FC 04
+  return (oldFunc == 1) ? 1 : 0; // old configuration with common FC 04
 }
 
 static uint8_t p156_uiToRaw(uint8_t ui)
@@ -252,11 +252,11 @@ struct P156_WriteJob
   uint16_t words[2] = {0, 0};
   uint8_t nRegs = 1;
   uint8_t fc = 6;
-  double value = 0.0; // nur für Event/Log
-  uint8_t slot = 255; // Wert-Index bei zyklischem Schreiben, 255 = Befehl MBWrite
+  double value = 0.0; // for event/log only
+  uint8_t slot = 255; // value index for cyclic writing, 255 = command MBWrite
 };
 
-#define P156_CONN_MEMBERS 8 // so viele Tasks können sich eine Verbindung teilen
+#define P156_CONN_MEMBERS 8 // max. number of tasks sharing one connection
 
 struct P156_Instance : public PluginTaskData_base
 {
@@ -268,7 +268,7 @@ struct P156_Instance : public PluginTaskData_base
   uint8_t rxBuf[12] = {};
   uint8_t rxLen = 0;
   uint8_t unitId = 1;
-  uint8_t readFc[P156_NR_OUTPUT_VALUES] = {3, 3, 3, 3}; // Funktionscode zum Lesen je Wert (3 oder 4)
+  uint8_t readFc[P156_NR_OUTPUT_VALUES] = {3, 3, 3, 3}; // read function code per value (3 or 4)
   uint32_t regAddr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
   uint8_t dataType[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
   uint8_t pauseGroup[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
@@ -283,49 +283,49 @@ struct P156_Instance : public PluginTaskData_base
   uint8_t pendingQuery = 255;                              // query index of pending request (255 = none)
   float values[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};
   uint8_t mode[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};          // P156_MODE_*
-  float lastOk[P156_NR_OUTPUT_VALUES] = {NAN, NAN, NAN, NAN}; // zuletzt erfolgreich zyklisch geschriebener Wert
-  uint8_t lastErr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};      // letzter gemeldeter Fehlercode (0 = keiner)
-  bool armed[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Schreibwert seit dem Start gesetzt
-  bool gotValue[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // Lesewert seit dem Start mindestens einmal gelesen
-  uint32_t initTime = 0;                                               // Zeitpunkt von PLUGIN_INIT
-  float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // Taskwert beim Start
-  struct P156_Conn *conn = nullptr; // gemeinsame Verbindung zum Gerät (IP + Port)
-  uint8_t connSlot = 255;           // Platz in conn->members
-  uint32_t connGen = 0;             // Kennung dieser Anmeldung an der Verbindung
-  uint8_t otherMask[P156_CONN_MEMBERS] = {}; // Werte anderer Tasks in der laufenden Anfrage (je Platz)
-  uint32_t otherGen[P156_CONN_MEMBERS] = {};  // Kennung des anderen Tasks beim Zusammenstellen
-  // Blockweises Lesen: eine Anfrage liest alle nahe beieinander liegenden Lesewerte
-  uint16_t blockStart = 0;         // erstes Register der laufenden Leseanfrage
-  uint8_t blockCount = 0;          // Anzahl Register
-  uint8_t blockFc = 3;             // Funktionscode 3 oder 4
-  uint8_t blockMask = 0;           // Bit i = Wert i ist in der Anfrage enthalten
-  bool noBlock = false;            // Gerät lehnt Blöcke ab -> Werte einzeln lesen
-  bool hdrRead = false;            // Kopf der Antwort schon gelesen
-  uint8_t hdr[9] = {};             // MBAP-Kopf + Funktionscode + Bytezahl/Exception
-  uint8_t exLogged = 0;            // Bit i = Exception für Wert i schon geloggt
-  uint32_t statRequests = 0;       // Leseanfragen seit dem Start
-  uint32_t statValues = 0;         // damit gelesene Werte
+  float lastOk[P156_NR_OUTPUT_VALUES] = {NAN, NAN, NAN, NAN}; // last value successfully written cyclically
+  uint8_t lastErr[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};      // last reported error code (0 = none)
+  bool armed[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // write value set since start
+  bool gotValue[P156_NR_OUTPUT_VALUES] = {false, false, false, false}; // read value received at least once since start
+  uint32_t initTime = 0;                                               // time of PLUGIN_INIT
+  float initVal[P156_NR_OUTPUT_VALUES] = {0, 0, 0, 0};              // task value at start
+  struct P156_Conn *conn = nullptr; // shared connection to the device (IP + port)
+  uint8_t connSlot = 255;           // slot in conn->members
+  uint32_t connGen = 0;             // id of this registration at the connection
+  uint8_t otherMask[P156_CONN_MEMBERS] = {}; // values of other tasks in the current request (per slot)
+  uint32_t otherGen[P156_CONN_MEMBERS] = {};  // id of the other task when the request was built
+  // Block reading: one request reads all read values that are close together
+  uint16_t blockStart = 0;         // first register of the current read request
+  uint8_t blockCount = 0;          // number of registers
+  uint8_t blockFc = 3;             // function code 3 or 4
+  uint8_t blockMask = 0;           // bit i = value i is part of the request
+  bool noBlock = false;            // device rejects blocks -> read values one by one
+  bool hdrRead = false;            // response header already read
+  uint8_t hdr[9] = {};             // MBAP header + function code + byte count/exception
+  uint8_t exLogged = 0;            // bit i = exception for value i already logged
+  uint32_t statRequests = 0;       // read requests since start
+  uint32_t statValues = 0;         // values read by these requests
 
   ~P156_Instance();
 };
 
-// ---- Gemeinsame Verbindungen: alle Tasks mit derselben IP und demselben Port nutzen eine TCP-Verbindung ----
-// Es ist immer nur eine Anfrage je Verbindung unterwegs (owner); ein wartender Task kommt als Nächster dran.
+// ---- Shared connections: all tasks with the same IP and port use one TCP connection ----
+// Only one request per connection is on the wire (owner); a waiting task is served next.
 struct P156_Conn
 {
   char ip[16] = {};
   uint16_t port = 502;
   WiFiClient client;
-  int connFd = -1;                  // ESP32: Socket im Aufbau (-1 = kein Aufbau)
-  uint32_t connStart = 0;           // Start des laufenden Aufbaus
-  uint32_t nextConnectAllowed = 0;  // frühester nächster Versuch (nur gültig wenn connAttempts > 0)
-  uint8_t connAttempts = 0;         // Verbindungsversuche seit der letzten gültigen Antwort
-  uint16_t tid = 0;                 // letzte Transaktions-ID dieser Verbindung
-  uint8_t refCount = 0;             // Anzahl Tasks, die diese Verbindung nutzen
-  taskIndex_t owner = INVALID_TASK_INDEX;     // Task mit laufender Anfrage
-  taskIndex_t lastOwner = INVALID_TASK_INDEX; // Task der letzten Anfrage
-  taskIndex_t waiting = INVALID_TASK_INDEX;   // Task, der auf die Verbindung wartet
-  P156_Instance *members[P156_CONN_MEMBERS] = {}; // Tasks dieser Verbindung (für gemeinsame Blöcke)
+  int connFd = -1;                  // ESP32: socket being connected (-1 = none)
+  uint32_t connStart = 0;           // start of the current connect
+  uint32_t nextConnectAllowed = 0;  // earliest next attempt (only valid if connAttempts > 0)
+  uint8_t connAttempts = 0;         // connect attempts since the last valid response
+  uint16_t tid = 0;                 // last transaction ID of this connection
+  uint8_t refCount = 0;             // number of tasks using this connection
+  taskIndex_t owner = INVALID_TASK_INDEX;     // task with a pending request
+  taskIndex_t lastOwner = INVALID_TASK_INDEX; // task of the last request
+  taskIndex_t waiting = INVALID_TASK_INDEX;   // task waiting for the connection
+  P156_Instance *members[P156_CONN_MEMBERS] = {}; // tasks of this connection (for shared blocks)
   uint32_t memberGen[P156_CONN_MEMBERS] = {};
   uint32_t gen = 0;
 
@@ -349,7 +349,7 @@ void p156_joinConn(P156_Instance *inst);
 bool p156_blockHasOthers(P156_Instance *inst, uint8_t qIdx);
 static P156_Conn *p156_conns[P156_MAX_CONN] = {};
 
-// Verbindung zu ip:port holen (vorhandene teilen oder neu anlegen)
+// Get the connection to ip:port (share an existing one or create a new one)
 P156_Conn *p156_getConn(const char *ip, uint16_t port)
 {
   for (uint8_t i = 0; i < P156_MAX_CONN; ++i)
@@ -378,7 +378,7 @@ P156_Conn *p156_getConn(const char *ip, uint16_t port)
   return nullptr;
 }
 
-// Verbindung nicht mehr nutzen; die letzte Nutzung schließt sie
+// Stop using the connection; the last user closes it
 void p156_putConn(P156_Conn *c)
 {
   if (!c)
@@ -400,7 +400,7 @@ uint16_t p156_nextTid(P156_Conn *c)
   return c->tid;
 }
 
-// Verbindung für eine Anfrage belegen. false = ein anderer Task fragt gerade (oder ist zuerst dran)
+// Occupy the connection for a request. false = another task is requesting (or goes first)
 bool p156_acquire(P156_Instance *inst)
 {
   P156_Conn *c = inst->conn;
@@ -411,14 +411,14 @@ bool p156_acquire(P156_Instance *inst)
     return false;
   }
   if ((c->owner == INVALID_TASK_INDEX) && (c->waiting != INVALID_TASK_INDEX) && (c->waiting != me) && (c->lastOwner == me))
-    return false; // der wartende Task kommt zuerst dran
+    return false; // the waiting task goes first
   c->owner = me;
   if (c->waiting == me)
     c->waiting = INVALID_TASK_INDEX;
   return true;
 }
 
-// Verbindung freigeben (keine Anfrage dieses Tasks mehr unterwegs)
+// Release the connection (no request of this task pending)
 void p156_release(P156_Instance *inst)
 {
   P156_Conn *c = inst->conn;
@@ -429,7 +429,7 @@ void p156_release(P156_Instance *inst)
   }
 }
 
-// Task an der Verbindung anmelden (damit andere Tasks seine Register mitlesen können)
+// Register the task at the connection (so other tasks can read its registers as well)
 void p156_joinConn(P156_Instance *inst)
 {
   P156_Conn *c = inst->conn;
@@ -464,11 +464,11 @@ P156_Instance::~P156_Instance()
   }
 }
 
-// Ergebnis von p156_connect()
-#define P156_CONN_OK 1      // verbunden, Anfrage kann gesendet werden
-#define P156_CONN_BUSY 0    // Aufbau läuft – im nächsten Takt erneut prüfen
-#define P156_CONN_FAIL -1   // Aufbau eben fehlgeschlagen
-#define P156_CONN_WAIT -2   // Wartezeit nach Fehlversuch oder kein Netzwerk
+// Result of p156_connect()
+#define P156_CONN_OK 1      // connected, request can be sent
+#define P156_CONN_BUSY 0    // connecting - check again in the next cycle
+#define P156_CONN_FAIL -1   // connect just failed
+#define P156_CONN_WAIT -2   // waiting after a failed attempt, or no network
 #define P156_CONNECT_TIMEOUT 1000
 #define P156_BACKOFF_MAX 30000
 
@@ -560,28 +560,28 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
                                            : 60000;
     }
 
-    // ---- Verbindung ----
-    addFormHeader(F("Verbindung"));
-    addFormTextBox(F("IPv4 Adresse"), getPluginCustomArgName(P156_ARG_IP), ipStr, 15);
-    addFormNote(F("IP des Modbus-Geraets"));
+    // ---- Connection ----
+    addFormHeader(F("Connection"));
+    addFormTextBox(F("IPv4 Address"), getPluginCustomArgName(P156_ARG_IP), ipStr, 15);
+    addFormNote(F("IP address of the Modbus device"));
     addFormNumericBox(F("Port"), P156_PORT_LBL, P156_PORT, 1, 65535);
-    addFormNote(F("Typisch: 502 oder 1502"));
+    addFormNote(F("Typical: 502 or 1502"));
     addFormNumericBox(F("Unit ID"), P156_UID_LBL, P156_UID, 1, 255);
-    addFormNote(F("Typisch: 1-255"));
+    addFormNote(F("Typical: 1-255"));
 
-    // ---- Pause-Gruppen ----
-    addFormHeader(F("Pause-Gruppen"));
-    addFormNote(F("Gruppe 1/2: Schritte 100ms  Gruppe 3/4: Schritte 1000ms"));
+    // ---- Pause groups ----
+    addFormHeader(F("Pause Groups"));
+    addFormNote(F("Group 1/2: steps of 100 ms, group 3/4: steps of 1000 ms"));
     for (uint8_t g = 0; g < P156_NR_PAUSE_GROUPS; ++g)
     {
       char buf[10];
       snprintf(buf, sizeof(buf), "%lu", (unsigned long)pau[g]);
-      addFormTextBox(String(F("Gruppe ")) + (g + 1) + F(" (ms)"),
+      addFormTextBox(String(F("Group ")) + (g + 1) + F(" (ms)"),
                      getPluginCustomArgName(P156_ARG_PAU1 + g), buf, 8);
     }
 
-    // ---- Abfragen ----
-    addFormHeader(F("Abfragen (4 Werte)"));
+    // ---- Values ----
+    addFormHeader(F("Values"));
 
     const __FlashStringHelper *dtOpts[] = {
         F("U16 - unsigned 16-bit"),
@@ -593,30 +593,30 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         F("S32 WS - signed 32-bit word-swapped"),
     };
     const __FlashStringHelper *grpOpts[] = {
-        F("Gruppe 1"),
-        F("Gruppe 2"),
-        F("Gruppe 3"),
-        F("Gruppe 4"),
+        F("Group 1"),
+        F("Group 2"),
+        F("Group 3"),
+        F("Group 4"),
     };
     const __FlashStringHelper *modeOpts[] = {
-        F("03 - Holding Register lesen"),
-        F("04 - Input Register lesen"),
-        F("06 - Register schreiben (16 Bit)"),
-        F("16 - Register schreiben (16/32 Bit, Float)"),
+        F("03 - Read Holding Registers"),
+        F("04 - Read Input Registers"),
+        F("06 - Write Single Register (16 bit)"),
+        F("16 - Write Multiple Registers (16/32 bit, float)"),
     };
 
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
-      addFormSubHeader(String(F("---- Wert ")) + (i + 1) + F(" ----"));
+      addFormSubHeader(String(F("---- Value ")) + (i + 1) + F(" ----"));
 
       char buf[8];
       snprintf(buf, sizeof(buf), "%u", p156_getReg(i, P156_REGS01, P156_REGS23));
-      addFormTextBox(F("Registeradresse"), getPluginCustomArgName(P156_ARG_REG0 + i), buf, 6);
-      addFormNote(F("PDU-Adresse 1-65535 (0 = Wert aus). 4xxxxx-Notation: Adresse minus 400001"));
+      addFormTextBox(F("Register Address"), getPluginCustomArgName(P156_ARG_REG0 + i), buf, 6);
+      addFormNote(F("PDU address 1-65535 (0 = value not used). 4xxxxx notation: address minus 400001"));
 
       {
         FormSelectorOptions msel(NR_ELEMENTS(modeOpts), modeOpts);
-        msel.addFormSelector(F("Funktionscode"),
+        msel.addFormSelector(F("Function Code"),
                              getPluginCustomArgName(P156_ARG_MODE0 + i),
                              p156_rawToUi(p156_getMode(i, P156_PGROUPS), P156_FUNC));
       }
@@ -626,49 +626,49 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         switch (i)
         {
         case 0:
-          tsel.addFormSelector(F("Datentyp"), P156_DT0_LBL, P156_DT0);
+          tsel.addFormSelector(F("Data Type"), P156_DT0_LBL, P156_DT0);
           break;
         case 1:
-          tsel.addFormSelector(F("Datentyp"), P156_DT1_LBL, P156_DT1);
+          tsel.addFormSelector(F("Data Type"), P156_DT1_LBL, P156_DT1);
           break;
         case 2:
-          tsel.addFormSelector(F("Datentyp"), P156_DT2_LBL, P156_DT2);
+          tsel.addFormSelector(F("Data Type"), P156_DT2_LBL, P156_DT2);
           break;
         case 3:
-          tsel.addFormSelector(F("Datentyp"), P156_DT3_LBL, P156_DT3);
+          tsel.addFormSelector(F("Data Type"), P156_DT3_LBL, P156_DT3);
           break;
         }
       }
 
       {
         FormSelectorOptions gsel(NR_ELEMENTS(grpOpts), grpOpts);
-        gsel.addFormSelector(F("Pause-Gruppe"),
+        gsel.addFormSelector(F("Pause Group"),
                              getPluginCustomArgName(P156_ARG_GRP0 + i),
                              p156_getGroup(i, P156_PGROUPS));
       }
     }
-    addFormNote(F("Funktionscode 06/16: Der Taskwert wird im Takt der Pause-Gruppe ins Register geschrieben. Wert setzen mit "
-                  "[Taskname].MBSet,Wertnr,Wert (z.B. aus Rules oder /control?cmd=...). Nach dem Start wird erst "
-                  "geschrieben, wenn ein Wert gesetzt wurde. 06 geht nur mit 16-Bit-Typen, sonst wird 16 verwendet."));
+    addFormNote(F("Function code 06/16: the task value is written to the register in the interval of the pause group. Set the value with "
+                  "[TaskName].MBSet,ValueNr,Value (e.g. from rules or /control?cmd=...). After start nothing is "
+                  "written until a value has been set. 06 works with 16-bit types only, otherwise 16 is used."));
 
     {
-      // Status seit dem Start des Tasks
+      // Status since the start of the task
       P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
       if (inst)
       {
         addFormSubHeader(F("Status"));
-        addRowLabel(F("Leseanfragen"));
+        addRowLabel(F("Read requests"));
         addHtmlInt(inst->statRequests);
-        addRowLabel(F("Gelesene Werte"));
+        addRowLabel(F("Values read"));
         addHtmlInt(inst->statValues);
-        addRowLabel(F("Blocklesen"));
-        addHtml(inst->noBlock ? F("aus (Geraet lehnt Bloecke ab, Werte einzeln)") : F("an"));
-        addRowLabel(F("Neuverbindungen"));
+        addRowLabel(F("Block reading"));
+        addHtml(inst->noBlock ? F("off (device rejects blocks, values are read one by one)") : F("on"));
+        addRowLabel(F("Reconnects"));
         addHtmlInt(inst->reconnectCount);
         if (inst->conn)
         {
-          addRowLabel(F("Verbindung"));
-          addHtml(inst->conn->refCount > 1 ? strformat(F("gemeinsam mit %d weiteren Task(s)"), inst->conn->refCount - 1) : String(F("eigene")));
+          addRowLabel(F("Connection"));
+          addHtml(inst->conn->refCount > 1 ? strformat(F("shared with %d other task(s)"), inst->conn->refCount - 1) : String(F("own")));
         }
       }
     }
@@ -693,7 +693,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
     P156_PORT = getFormItemInt(P156_PORT_LBL);
     P156_UID = getFormItemInt(P156_UID_LBL);
-    P156_FUNC = 0; // Lese-Funktionscode steht jetzt je Wert (siehe unten)
+    P156_FUNC = 0; // read function code is now stored per value (see below)
     P156_DT0 = getFormItemInt(P156_DT0_LBL);
     P156_DT1 = getFormItemInt(P156_DT1_LBL);
     P156_DT2 = getFormItemInt(P156_DT2_LBL);
@@ -786,10 +786,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       inst->mode[i] = (ui == 2) ? P156_MODE_FC6 : ((ui == 3) ? P156_MODE_FC16 : P156_MODE_READ);
       inst->readFc[i] = (ui == 1) ? 4 : 3;
       if ((inst->mode[i] == P156_MODE_FC6) && (inst->dataType[i] >= P156_TYPE_U32))
-        inst->mode[i] = P156_MODE_FC16; // 32 Bit / Float passen nicht in FC 06
+        inst->mode[i] = P156_MODE_FC16; // 32 bit / float do not fit into FC 06
       inst->lastOk[i] = NAN;
       inst->lastErr[i] = 0;
-      // Schreibwert: erst schreiben, wenn nach dem Start ein Wert gesetzt wurde (MBSet oder geänderter Taskwert)
+      // Write value: write only after a value was set after start (MBSet or changed task value)
       inst->armed[i] = false;
       inst->gotValue[i] = false;
       inst->initVal[i] = UserVar.getFloat(event->TaskIndex, i);
@@ -801,7 +801,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       if (inst->pauseMs[g] < 50)
         inst->pauseMs[g] = def[g];
     }
-    // Alle Werte gleich nach dem Start einmal abfragen, nicht erst nach Ablauf ihrer Pausenzeit
+    // Request all values right after start, not only after their pause time
     inst->initTime = millis();
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       inst->lastSend[i] = inst->initTime - inst->pauseMs[inst->pauseGroup[i]] - 1;
@@ -849,7 +849,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     if (inst)
     {
       inst->myInit = false;
-      p156_release(inst); // Verbindung bleibt für andere Tasks offen, wird mit der letzten Nutzung geschlossen
+      p156_release(inst); // connection stays open for other tasks, the last user closes it
     }
     break;
   }
@@ -859,20 +859,20 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     const String command = parseString(string, 1);
     if (equals(command, F("mbset")))
     {
-      // MBSet,<Wertnr 1-4>,<Wert>: Schreibwert setzen (wird im Takt der Pause-Gruppe geschrieben)
+      // MBSet,<value nr 1-4>,<value>: set the write value (written in the interval of the pause group)
       success = true;
       P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
       int32_t nr = 0;
       ESPEASY_RULES_FLOAT_TYPE d = 0;
       String err;
       if (!inst || !inst->myInit)
-        err = F("Task nicht initialisiert");
+        err = F("task not initialised");
       else if (!validIntFromString(parseString(string, 2), nr) || (nr < 1) || (nr > P156_NR_OUTPUT_VALUES))
-        err = F("Wertnummer muss 1-4 sein");
+        err = F("value number must be 1-4");
       else if (inst->mode[nr - 1] == P156_MODE_READ)
-        err = F("Wert ist auf Lesen eingestellt");
+        err = F("value is set to read");
       else if (!validDoubleFromString(parseStringKeepCase(string, 3), d))
-        err = F("ungültiger Wert");
+        err = F("invalid value");
       else
       {
         P156_WriteJob test;
@@ -895,13 +895,13 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     }
     if (!equals(command, F("mbwrite")))
       break;
-    success = true; // Befehl gehört zu P156 – Fehler werden geloggt, nicht an andere Plugins weitergereicht
+    success = true; // command belongs to P156 - errors are logged, not passed on to other plugins
     P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
     String err;
     if (!inst || !inst->myInit)
-      err = F("Task nicht initialisiert");
+      err = F("task not initialised");
     else if (!p156_queueWrite(inst, string, err) && err.isEmpty())
-      err = F("unbekannter Fehler");
+      err = F("unknown error");
     if (!err.isEmpty())
     {
       if (loglevelActiveFor(LOG_LEVEL_ERROR))
@@ -922,9 +922,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     P156_Instance *inst = static_cast<P156_Instance *>(getPluginTaskData(event->TaskIndex));
     if (inst && inst->myInit)
     {
-      // Nach dem Start erst senden, wenn jeder aktive Lesewert einmal echt gelesen wurde
-      // (sonst gingen z. B. Zählerstände kurz als 0 an die Controller).
-      // Sicherheitsnetz: nach 2 Minuten wieder senden, auch wenn ein Register nie antwortet.
+      // After start, send only when every active read value has really been read once
+      // (otherwise e.g. energy counters would briefly be sent as 0 to the controllers).
+      // Safety net: send again after 2 minutes, even if a register never answers.
       if (timePassedSince(inst->initTime) < 120000)
       {
         for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
@@ -936,12 +936,12 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       const bool lost = (inst->conn->connAttempts >= 3);
       for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       {
-        if (inst->mode[i] == P156_MODE_READ) // Schreibwerte behalten den gesetzten Taskwert
+        if (inst->mode[i] == P156_MODE_READ) // write values keep the task value that was set
           UserVar.setFloat(event->TaskIndex, i, lost ? 0.0f : inst->values[i]);
       }
-      // Gerät seit mehreren Versuchen nicht erreichbar: Lesewerte stehen lokal auf 0 (Rules sehen
-      // "keine Leistung"), an die Controller wird aber nichts gesendet - eine 0 würde dort
-      // Zählerstände und Auswertungen verfälschen. Mit der ersten gültigen Antwort geht es weiter.
+      // Device not reachable for several attempts: read values are 0 locally (rules see
+      // "no power"), but nothing is sent to the controllers - a 0 would corrupt
+      // counters and statistics there. Sending resumes with the first valid response.
       if (lost)
         return false;
       success = true;
@@ -972,7 +972,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
         inst->pendingQuery = P156_PENDING_NONE;
         inst->errorCount = 0; // device answered (also with exception)
         if (res != 3)
-          inst->conn->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
+          inst->conn->connAttempts = 0; // valid response - connection is fine
         p156_writeResult(inst, inst->activeWrite, (res == 1) ? 0 : ((res == 2) ? exCode : P156_WERR_TIMEOUT));
       }
       else if (timePassedSince(inst->requestTime) > 500)
@@ -987,8 +987,8 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
     else if ((inst->pendingQuery == P156_PENDING_NONE) && (inst->writeCount > 0))
     {
       // Phase 2 (write): send the oldest queued write job
-      // (während des Verbindungsaufbaus bleibt der Auftrag in der Warteschlange;
-      //  in der Wartezeit nach Fehlversuchen wird er sofort mit 254 beendet)
+      // (while connecting, the job stays in the queue;
+      //  while waiting after failed attempts, it is finished with 254 at once)
       const int8_t conn = p156_connect(inst);
       if ((conn != P156_CONN_BUSY) && ((conn != P156_CONN_OK) || p156_acquire(inst)))
       {
@@ -1012,10 +1012,10 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       const uint8_t res = p156_parseBlock(inst, exCode);
       if (res == 1)
       {
-        // alle Werte des Blocks sind frisch gelesen
+        // all values of the block are freshly read
         inst->pendingQuery = 255;
         inst->errorCount = 0;
-        inst->conn->connAttempts = 0; // gültige Antwort – Verbindung ist in Ordnung
+        inst->conn->connAttempts = 0; // valid response - connection is fine
         const uint32_t now = millis();
         for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
         {
@@ -1030,16 +1030,16 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
       }
       else if (res == 2)
       {
-        // Gerät antwortet mit Modbus-Exception
+        // device answers with a Modbus exception
         inst->pendingQuery = 255;
         inst->errorCount = 0;
-        inst->conn->connAttempts = 0; // das Gerät antwortet – Verbindung ist in Ordnung
+        inst->conn->connAttempts = 0; // the device answers - connection is fine
         if (!inst->noBlock && p156_blockHasOthers(inst, qIdx))
         {
-          // Block abgelehnt (z. B. nicht belegte Register in der Lücke): ab jetzt einzeln lesen, sofort erneut
+          // block rejected (e.g. undefined registers in a gap): read one by one from now on, retry at once
           inst->noBlock = true;
           if (loglevelActiveFor(LOG_LEVEL_INFO))
-            addLogMove(LOG_LEVEL_INFO, strformat(F("P156: Geraet lehnt Blocklesen ab (Exception %d), lese Werte einzeln"), exCode));
+            addLogMove(LOG_LEVEL_INFO, strformat(F("P156: device rejects block reading (exception %d), reading values one by one"), exCode));
         }
         else
         {
@@ -1048,13 +1048,13 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
           if (!(inst->exLogged & (1 << qIdx)) && loglevelActiveFor(LOG_LEVEL_ERROR))
           {
             inst->exLogged |= (1 << qIdx);
-            addLogMove(LOG_LEVEL_ERROR, strformat(F("P156: Wert %d (Register %u): Exception %d"), qIdx + 1, (unsigned)inst->regAddr[qIdx], exCode));
+            addLogMove(LOG_LEVEL_ERROR, strformat(F("P156: value %d (register %u): exception %d"), qIdx + 1, (unsigned)inst->regAddr[qIdx], exCode));
           }
         }
       }
       else if ((res == 3) || (timePassedSince(inst->requestTime) > 500))
       {
-        // ungültige Antwort oder Timeout — give up, advance to next query
+        // invalid response or timeout — give up, advance to next query
         inst->pendingQuery = 255;
         inst->hdrRead = false;
         inst->conn->client.clear();
@@ -1084,22 +1084,22 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
           P156_WriteJob cyc;
           if (inst->mode[qIdx] != P156_MODE_READ)
           {
-            // Zyklisch schreiben: Taskwert holen und kodieren (vor dem Verbindungsaufbau)
+            // Cyclic write: get and encode the task value (before connecting)
             const float v = UserVar.getFloat(event->TaskIndex, qIdx);
             if (!inst->armed[qIdx] && (v != inst->initVal[qIdx]) && !isnan(v))
-              inst->armed[qIdx] = true; // Taskwert wurde geändert (z. B. TaskValueSet)
+              inst->armed[qIdx] = true; // task value was changed (e.g. TaskValueSet)
             String err;
             if (!inst->armed[qIdx] || isnan(v) || !p156_encodeValue(v, inst->dataType[qIdx], cyc, err))
             {
               if (!err.isEmpty() && loglevelActiveFor(LOG_LEVEL_ERROR))
               {
-                String l = F("P156 Schreibwert ");
+                String l = F("P156 write value ");
                 l += qIdx + 1;
                 l += F(": ");
                 l += err;
                 addLogMove(LOG_LEVEL_ERROR, l);
               }
-              inst->lastSend[qIdx] = millis(); // noch kein (gültiger) Wert – nächste Runde
+              inst->lastSend[qIdx] = millis(); // no (valid) value yet - next round
               inst->queryIndex = (qIdx + 1) % P156_NR_OUTPUT_VALUES;
               break;
             }
@@ -1110,9 +1110,9 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
 
           const int8_t conn = p156_connect(inst);
           if ((conn == P156_CONN_BUSY) || (conn == P156_CONN_WAIT))
-            break; // Aufbau läuft oder Wartezeit – nichts blockieren, später erneut
+            break; // connecting or waiting - do not block, retry later
           if ((conn == P156_CONN_OK) && !p156_acquire(inst))
-            break; // anderer Task dieses Geräts fragt gerade – im nächsten Takt erneut
+            break; // another task of this device is requesting - retry in the next cycle
           if (inst->mode[qIdx] != P156_MODE_READ)
           {
             inst->lastSend[qIdx] = millis();
@@ -1154,7 +1154,7 @@ boolean Plugin_156(uint8_t function, struct EventStruct *event, String &string)
   return success;
 }
 
-// Wartezeit nach dem n-ten Versuch ohne gültige Antwort: 1, 2, 4, 8, 16, 30, 30 … s
+// Wait time after the n-th attempt without a valid response: 1, 2, 4, 8, 16, 30, 30 ... s
 static uint32_t p156_backoffMs(uint8_t attempts)
 {
   if (attempts == 0)
@@ -1175,7 +1175,7 @@ void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, 
 #endif
   if (inst->conn->connAttempts >= 3)
   {
-    // Gerät seit mehreren Versuchen nicht erreichbar: keine alten Werte weitermelden
+    // device not reachable for several attempts: do not report old values
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
       inst->values[i] = 0.0f;
   }
@@ -1200,14 +1200,14 @@ void p156_connectFailed(P156_Instance *inst, const __FlashStringHelper *reason, 
   }
 }
 
-// Nicht-blockierender Verbindungsaufbau, wird jeden Takt aufgerufen solange eine Anfrage ansteht.
-// Rückgabe: P156_CONN_OK / _BUSY / _FAIL / _WAIT (siehe oben)
+// Non-blocking connect, called every cycle while a request is pending.
+// Returns P156_CONN_OK / _BUSY / _FAIL / _WAIT (see above)
 int8_t p156_connect(P156_Instance *inst)
 {
 #ifdef ESP32
   if (inst->conn->connFd >= 0)
   {
-    // Aufbau läuft: ohne zu warten prüfen, ob der Socket fertig ist
+    // connecting: check without waiting whether the socket is ready
     fd_set wset;
     FD_ZERO(&wset);
     FD_SET(inst->conn->connFd, &wset);
@@ -1231,12 +1231,12 @@ int8_t p156_connect(P156_Instance *inst)
       p156_connectFailed(inst, F("error"), sockErr);
       return P156_CONN_FAIL;
     }
-    // Verbunden: Socket wie bei NetworkClient::connect() wieder blockierend schalten und übergeben
+    // connected: switch the socket back to blocking (as NetworkClient::connect() does) and hand it over
     const int fd = inst->conn->connFd;
     inst->conn->connFd = -1;
     lwip_fcntl(fd, F_SETFL, lwip_fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
     inst->conn->client = WiFiClient(fd);
-    inst->conn->client.setConnectionTimeout(500); // Lese-/Schreib-Timeout wie bisher
+    inst->conn->client.setConnectionTimeout(500); // read/write timeout
     inst->rxLen = 0;
     return P156_CONN_OK;
   }
@@ -1244,13 +1244,13 @@ int8_t p156_connect(P156_Instance *inst)
 
   if (inst->conn->client.connected())
     return P156_CONN_OK;
-  // Kein Versuch ohne Netzwerk (verhindert Absturz beim Booten)
+  // no attempt without network (prevents a crash during boot)
   if (!NetworkConnected(0))
     return P156_CONN_WAIT;
   if ((inst->conn->connAttempts > 0) && !timeOutReached(inst->conn->nextConnectAllowed))
     return P156_CONN_WAIT;
 
-  inst->conn->client.stop(); // Reste einer abgebrochenen Verbindung freigeben
+  inst->conn->client.stop(); // free the remains of an aborted connection
   if (inst->conn->connAttempts < 255)
     inst->conn->connAttempts++;
   inst->conn->nextConnectAllowed = millis() + p156_backoffMs(inst->conn->connAttempts);
@@ -1282,9 +1282,9 @@ int8_t p156_connect(P156_Instance *inst)
   }
   inst->conn->connFd = fd;
   inst->conn->connStart = millis();
-  return P156_CONN_BUSY; // Ergebnis im nächsten Takt per select() prüfen
+  return P156_CONN_BUSY; // check the result with select() in the next cycle
 #else
-  if (!inst->conn->client.connect(inst->conn->ip, inst->conn->port, 500)) // ESP8266: blockierend, max. 500 ms
+  if (!inst->conn->client.connect(inst->conn->ip, inst->conn->port, 500)) // ESP8266: blocking, max. 500 ms
   {
     p156_connectFailed(inst, F("timeout"), 0);
     return P156_CONN_FAIL;
@@ -1299,8 +1299,8 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
     return false;
   if (!inst->conn->client.connected())
     return false;
-  inst->sendCount = p156_nextTid(inst->conn); // Transaktions-ID je Verbindung
-  (void)qIdx; // Register und Anzahl stehen in blockStart/blockCount (p156_buildBlock)
+  inst->sendCount = p156_nextTid(inst->conn); // transaction ID per connection
+  (void)qIdx; // register and count are in blockStart/blockCount (p156_buildBlock)
   inst->hdrRead = false;
   byte req[12];
   req[0] = (uint8_t)(inst->sendCount >> 8);
@@ -1321,16 +1321,16 @@ bool p156_sendRequest(P156_Instance *inst, uint8_t qIdx)
   return true;
 }
 
-// Anzahl Register eines Datentyps
+// Number of registers of a data type
 static uint8_t p156_regCount(uint8_t type)
 {
   return (type >= P156_TYPE_U32) ? 2 : 1;
 }
 
-#define P156_BLOCK_MAX 32 // höchstens so viele Register in einer Leseanfrage
+#define P156_BLOCK_MAX 32 // max. number of registers in one read request
 
-// Leseanfrage für Wert qIdx zusammenstellen: alle anderen Lesewerte mit demselben Funktionscode,
-// die zusammen mit ihm in höchstens P156_BLOCK_MAX Registern liegen, werden mitgelesen.
+// Build the read request for value qIdx: all other read values with the same function code
+// that lie within P156_BLOCK_MAX registers together with it are read as well.
 void p156_buildBlock(P156_Instance *inst, uint8_t qIdx)
 {
   uint32_t start = inst->regAddr[qIdx];
@@ -1353,7 +1353,7 @@ void p156_buildBlock(P156_Instance *inst, uint8_t qIdx)
       }
     }
   }
-  // Register anderer Tasks derselben Verbindung (gleiche Unit ID und gleicher Funktionscode) mitlesen
+  // also read registers of other tasks of the same connection (same unit ID and function code)
   for (uint8_t k = 0; k < P156_CONN_MEMBERS; ++k)
   {
     inst->otherMask[k] = 0;
@@ -1382,7 +1382,7 @@ void p156_buildBlock(P156_Instance *inst, uint8_t qIdx)
   inst->blockMask = mask;
 }
 
-// enthält die laufende Anfrage Werte außer qIdx (eigene oder anderer Tasks)?
+// does the current request contain values other than qIdx (own or of other tasks)?
 bool p156_blockHasOthers(P156_Instance *inst, uint8_t qIdx)
 {
   if (inst->blockMask & ~(1 << qIdx))
@@ -1393,7 +1393,7 @@ bool p156_blockHasOthers(P156_Instance *inst, uint8_t qIdx)
   return false;
 }
 
-// Registerinhalt (2 oder 4 Bytes ab p) nach Datentyp umrechnen
+// Convert register content (2 or 4 bytes at p) according to the data type
 static float p156_decode(uint8_t type, const uint8_t *p)
 {
   const uint8_t h1 = p[0], l1 = p[1];
@@ -1429,22 +1429,22 @@ static float p156_decode(uint8_t type, const uint8_t *p)
   return v;
 }
 
-// Antwort auf die laufende Leseanfrage auswerten (nicht blockierend).
-// Rückgabe: 0 = noch nicht vollständig, 1 = OK (Werte übernommen), 2 = Modbus-Exception (exCode), 3 = ungültig
+// Evaluate the response to the current read request (non-blocking).
+// Returns 0 = not complete yet, 1 = OK (values taken over), 2 = Modbus exception (exCode), 3 = invalid
 uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
 {
   if (!inst)
     return 3;
   if (!inst->hdrRead)
   {
-    // Kopf: Transaktions-ID (2), Protokoll (2), Länge (2), Unit (1), Funktionscode (1), Bytezahl bzw. Exception-Code (1)
+    // header: transaction ID (2), protocol (2), length (2), unit (1), function code (1), byte count or exception code (1)
     if (inst->conn->client.available() < 9)
       return 0;
     for (uint8_t i = 0; i < 9; ++i)
       inst->hdr[i] = inst->conn->client.read();
     if ((uint16_t)((inst->hdr[0] << 8) | inst->hdr[1]) != inst->sendCount)
     {
-      inst->conn->client.clear(); // Antwort auf eine ältere Anfrage
+      inst->conn->client.clear(); // response to an older request
       return 3;
     }
     if (inst->hdr[7] & 0x80)
@@ -1475,7 +1475,7 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
       return 3;
     inst->values[i] = p156_decode(inst->dataType[i], &data[off]);
   }
-  // Werte anderer Tasks aus derselben Antwort übernehmen
+  // take over values of other tasks from the same response
   const uint32_t now = millis();
   for (uint8_t k = 0; k < P156_CONN_MEMBERS; ++k)
   {
@@ -1483,7 +1483,7 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
       continue;
     P156_Instance *m = inst->conn->members[k];
     if (!m || (inst->conn->memberGen[k] != inst->otherGen[k]) || !m->myInit)
-      continue; // Task wurde inzwischen neu gestartet
+      continue; // task was restarted in the meantime
     for (uint8_t j = 0; j < P156_NR_OUTPUT_VALUES; ++j)
     {
       if (!(inst->otherMask[k] & (1 << j)))
@@ -1500,8 +1500,8 @@ uint8_t p156_parseBlock(P156_Instance *inst, uint8_t &exCode)
   return 1;
 }
 
-// Gerät antwortet seit mehreren Anfragen nicht: Verbindung neu aufbauen. Die Lesewerte stehen lokal auf 0,
-// an die Controller wird bis zur nächsten gültigen Antwort nichts gesendet (wie nach 3 Fehlversuchen beim Verbinden).
+// Device has not answered several requests: reconnect. The read values are 0 locally,
+// nothing is sent to the controllers until the next valid response (as after 3 failed connect attempts).
 void p156_deviceLost(P156_Instance *inst)
 {
   inst->errorCount = 0;
@@ -1520,11 +1520,11 @@ void p156_deviceLost(P156_Instance *inst)
 // Write support (MBWrite command)
 // ============================================================
 
-// Datentyp aus Text: u16, s16, u32, s32, float, u32ws, s32ws oder Ziffer 0..6; -1 = ungültig
+// Data type from text: u16, s16, u32, s32, float, u32ws, s32ws or digit 0..6; -1 = invalid
 static int p156_parseType(const String &s)
 {
   if (s.isEmpty())
-    return -2; // nicht angegeben
+    return -2; // not given
   const char *names[] = {"u16", "s16", "u32", "s32", "float", "u32ws", "s32ws"};
   for (int i = 0; i <= P156_TYPE_S32WS; ++i)
   {
@@ -1539,28 +1539,28 @@ static int p156_parseType(const String &s)
 
 bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
 {
-  // MBWrite,<Register>,<Wert>[,<Datentyp>[,<FC>]]
+  // MBWrite,<register>,<value>[,<data type>[,<FC>]]
   int32_t reg = 0;
   if (!validIntFromString(parseString(cmd, 2), reg) || (reg < 0) || (reg > 65535))
   {
-    err = F("ungültiges Register");
+    err = F("invalid register");
     return false;
   }
   ESPEASY_RULES_FLOAT_TYPE d = 0;
   if (!validDoubleFromString(parseStringKeepCase(cmd, 3), d))
   {
-    err = F("ungültiger Wert");
+    err = F("invalid value");
     return false;
   }
   int type = p156_parseType(parseString(cmd, 4));
   if (type == -1)
   {
-    err = F("ungültiger Datentyp");
+    err = F("invalid data type");
     return false;
   }
   if (type == -2)
   {
-    // Datentyp der Query mit diesem Register übernehmen, sonst U16
+    // use the data type of the query with this register, otherwise U16
     type = P156_TYPE_U16;
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
@@ -1585,12 +1585,12 @@ bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
     int32_t fc = 0;
     if (!validIntFromString(fcStr, fc) || ((fc != 6) && (fc != 16)))
     {
-      err = F("FC muss 6 oder 16 sein");
+      err = F("FC must be 6 or 16");
       return false;
     }
     if ((fc == 6) && (job.nRegs != 1))
     {
-      err = F("FC 6 nur für 16-Bit-Typen");
+      err = F("FC 6 only for 16-bit types");
       return false;
     }
     job.fc = (uint8_t)fc;
@@ -1598,7 +1598,7 @@ bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
 
   if (inst->writeCount >= P156_WRITE_QUEUE)
   {
-    err = F("Warteschlange voll");
+    err = F("queue full");
     p156_writeResult(inst, job, P156_WERR_QUEUE_FULL);
     return false;
   }
@@ -1608,7 +1608,7 @@ bool p156_queueWrite(P156_Instance *inst, const String &cmd, String &err)
   return true;
 }
 
-// Wert in 1 oder 2 Registerworte umsetzen (Bereich wird geprüft). Setzt value, nRegs, words.
+// Convert a value into 1 or 2 register words (range is checked). Sets value, nRegs, words.
 bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
 {
   job.value = d;
@@ -1618,7 +1618,7 @@ bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
   case P156_TYPE_U16:
     if ((d < 0) || (d > 65535))
     {
-      err = F("Wert außerhalb 0..65535");
+      err = F("value outside 0..65535");
       return false;
     }
     job.nRegs = 1;
@@ -1627,7 +1627,7 @@ bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
   case P156_TYPE_S16:
     if ((d < -32768) || (d > 32767))
     {
-      err = F("Wert außerhalb -32768..32767");
+      err = F("value outside -32768..32767");
       return false;
     }
     job.nRegs = 1;
@@ -1637,7 +1637,7 @@ bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
   case P156_TYPE_U32WS:
     if ((d < 0) || (d > 4294967295.0))
     {
-      err = F("Wert außerhalb 0..4294967295");
+      err = F("value outside 0..4294967295");
       return false;
     }
     u = (uint32_t)llround(d);
@@ -1646,7 +1646,7 @@ bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
   case P156_TYPE_S32WS:
     if ((d < -2147483648.0) || (d > 2147483647.0))
     {
-      err = F("Wert außerhalb des S32-Bereichs");
+      err = F("value outside the S32 range");
       return false;
     }
     u = (uint32_t)(int32_t)llround(d);
@@ -1663,13 +1663,13 @@ bool p156_encodeValue(double d, int type, P156_WriteJob &job, String &err)
     job.nRegs = 2;
     if ((type == P156_TYPE_U32WS) || (type == P156_TYPE_S32WS))
     {
-      // Word-Swapped: erstes Register = Low-Word (wie beim Lesen)
+      // word-swapped: first register = low word (as for reading)
       job.words[0] = (uint16_t)(u & 0xFFFF);
       job.words[1] = (uint16_t)(u >> 16);
     }
     else
     {
-      // Standard (auch Float): erstes Register = High-Word
+      // standard (also float): first register = high word
       job.words[0] = (uint16_t)(u >> 16);
       job.words[1] = (uint16_t)(u & 0xFFFF);
     }
@@ -1683,7 +1683,7 @@ bool p156_sendWrite(P156_Instance *inst)
     return false;
   if (!inst->conn->client.connected())
     return false;
-  inst->sendCount = p156_nextTid(inst->conn); // Transaktions-ID je Verbindung
+  inst->sendCount = p156_nextTid(inst->conn); // transaction ID per connection
 
   const P156_WriteJob &job = inst->activeWrite;
   byte req[17];
@@ -1718,18 +1718,18 @@ bool p156_sendWrite(P156_Instance *inst)
   req[4] = (uint8_t)(pduLen >> 8);
   req[5] = (uint8_t)pduLen;
 
-  inst->conn->client.clear(); // verspätete Bytes einer abgebrochenen Anfrage verwerfen
+  inst->conn->client.clear(); // discard late bytes of an aborted request
   inst->rxLen = 0;
   inst->requestTime = millis();
   return inst->conn->client.write(req, len) == len;
 }
 
-// 0 = noch nicht vollständig, 1 = OK, 2 = Modbus-Exception (exCode), 3 = ungültige Antwort
+// 0 = not complete yet, 1 = OK, 2 = Modbus exception (exCode), 3 = invalid response
 uint8_t p156_parseWriteResponse(P156_Instance *inst, uint8_t &exCode)
 {
   for (;;)
   {
-    // Exception-Antwort: 9 Bytes, normale Antwort auf FC 6/16: 12 Bytes
+    // exception response: 9 bytes, normal response to FC 6/16: 12 bytes
     const uint8_t need = ((inst->rxLen >= 8) && (inst->rxBuf[7] & 0x80)) ? 9 : 12;
     if (inst->rxLen >= need)
       break;
@@ -1767,7 +1767,7 @@ void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t cod
 {
   if (job.slot < P156_NR_OUTPUT_VALUES)
   {
-    // Zyklisches Schreiben: OK nur melden, wenn sich der Wert geändert hat oder vorher ein Fehler war
+    // cyclic write: report OK only if the value changed or there was an error before
     const float v = (float)job.value;
     if (code == 0)
     {
@@ -1780,7 +1780,7 @@ void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t cod
     {
       inst->lastOk[job.slot] = NAN;
       if (code == inst->lastErr[job.slot])
-        return; // derselbe Fehler wie beim letzten Mal – nicht in jedem Takt melden
+        return; // same error as last time - do not report in every cycle
       inst->lastErr[job.slot] = code;
     }
   }
@@ -1790,7 +1790,7 @@ void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t cod
 
   if (code == 0)
   {
-    // Register wird gelesen? Dann sofort neu lesen, damit der Taskwert stimmt
+    // register is also read? Then read it again at once so the task value is correct
     for (uint8_t i = 0; i < P156_NR_OUTPUT_VALUES; ++i)
     {
       if ((inst->mode[i] == P156_MODE_READ) && (inst->regAddr[i] != 0) && (inst->regAddr[i] == job.reg))
@@ -1812,7 +1812,7 @@ void p156_writeResult(P156_Instance *inst, const P156_WriteJob &job, uint8_t cod
       l += F(" OK");
     else
     {
-      l += F(" Fehler ");
+      l += F(" error ");
       l += code;
     }
     addLogMove(code == 0 ? LOG_LEVEL_INFO : LOG_LEVEL_ERROR, l);

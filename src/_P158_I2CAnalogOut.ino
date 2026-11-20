@@ -5,17 +5,17 @@
 // ######################## Plugin 158: I²C Analog Out ########################
 // #######################################################################################################
 //
-// 4-Kanal-Analogausgang (10 Bit, z. B. 0-10 V) am I2C-Bus.
-// Protokoll je Schreibvorgang: <Kanal 0-3> <Low-Byte> <High-Byte>, Wert 0-1023.
+// 4-channel analog output (10 bit, e.g. 0-10 V) on the I2C bus.
+// Protocol per write: <channel 0-3> <low byte> <high byte>, value 0-1023.
 //
-// Befehl: I2CAnalogOutCMD<Tasknummer>,<Kanal 0-3>,<Wert 0-1023>
-//   Taskwert i (1-4) zeigt den zuletzt erfolgreich geschriebenen Wert von Kanal i-1,
-//   -1 nach dem Start bzw. nach einem Übertragungsfehler.
-//   Start/Ende des Tasks: alle 4 Kanäle werden auf 0 gesetzt.
+// Command: I2CAnalogOutCMD<task number>,<channel 0-3>,<value 0-1023>
+//   Task value i (1-4) shows the last value successfully written to channel i-1,
+//   -1 after start or after a transmission error.
+//   Start/end of the task: all 4 channels are set to 0.
 //
 // PCONFIG:
-//   [0] I2C-Adresse (7 Bit)
-//   [1] Ausgabetyp (Anzahl Taskwerte)
+//   [0] I2C address (7 bit)
+//   [1] Output type (number of task values)
 // #######################################################################################################
 
 #include "Wire.h"
@@ -24,7 +24,7 @@
 #define PLUGIN_ID_158 158
 #define PLUGIN_NAME_158 "I²C Analog Out [Testing]"
 
-#define P158_DEF_I2C_ADDR       0x58 // 7-Bit-Adresse (= 0xB0 in 8-Bit-Schreibweise)
+#define P158_DEF_I2C_ADDR       0x58 // 7-bit address (= 0xB0 in 8-bit notation)
 #define P158_I2C_ADDR           PCONFIG(0)
 #define P158_SENSOR_TYPE_INDEX  1
 #define P158_NR_OUTPUT_VALUES   getValueCountFromSensorType(static_cast<Sensor_VType>(PCONFIG(P158_SENSOR_TYPE_INDEX)))
@@ -118,7 +118,7 @@ boolean Plugin_158(uint8_t function, struct EventStruct *event, String& string)
     {
       long addr = strtol(webArg(F("i2c_addr")).c_str(), nullptr, 16);
 
-      // 8-Bit-Schreibweise (z. B. 0xB0) in die 7-Bit-Adresse umrechnen
+      // convert 8-bit notation (e.g. 0xB0) into the 7-bit address
       if ((addr > 0x77) && (addr <= 0xFF)) {
         addr >>= 1;
       }
@@ -157,9 +157,9 @@ boolean Plugin_158(uint8_t function, struct EventStruct *event, String& string)
       if (!cmd.equalsIgnoreCase(concat(F(P158_CMD_NAME), event->TaskIndex + 1))) {
         break;
       }
-      success = true; // Befehl gehört zu diesem Task
+      success = true; // command belongs to this task
 
-      // Werte aus Rules kommen mit Nachkommastellen (z. B. "500.00"): als Zahl lesen, Nachkommastellen abschneiden
+      // values from rules come with decimals (e.g. "500.00"): parse as number, cut off the decimals
       float   fChannel = -1.0f;
       float   fValue   = -1.0f;
       const bool parsed = validFloatFromString(parseString(string, 2), fChannel) &&
@@ -182,7 +182,7 @@ boolean Plugin_158(uint8_t function, struct EventStruct *event, String& string)
           UserVar.setFloat(event->TaskIndex, channel, value);
         }
       } else {
-        // Modul hat nicht quittiert: Werte ungültig
+        // module did not acknowledge: values invalid
         for (uint8_t i = 0; i < P158_NR_CHANNELS; ++i) {
           UserVar.setFloat(event->TaskIndex, i, -1);
         }
@@ -198,23 +198,23 @@ boolean Plugin_158(uint8_t function, struct EventStruct *event, String& string)
   return success;
 }
 
-// Rückgabe: 0 = OK, sonst Fehlercode von Wire.endTransmission()
+// Returns 0 = OK, otherwise the error code of Wire.endTransmission()
 static uint8_t p158_writeChannel(uint8_t address, uint8_t channel, uint16_t value)
 {
   Wire.beginTransmission(address);
-  Wire.write(channel);                       // Kanal
-  Wire.write(static_cast<uint8_t>(value));      // Low-Byte
-  Wire.write(static_cast<uint8_t>(value >> 8)); // High-Byte
+  Wire.write(channel);                       // channel
+  Wire.write(static_cast<uint8_t>(value));      // low byte
+  Wire.write(static_cast<uint8_t>(value >> 8)); // high byte
   return Wire.endTransmission();
 }
 
-// Alle Kanäle auf 0, Taskwerte auf -1 (noch kein Wert geschrieben)
+// All channels to 0, task values to -1 (no value written yet)
 static void p158_resetOutputs(struct EventStruct *event)
 {
   for (uint8_t i = 0; i < P158_NR_CHANNELS; ++i) {
     UserVar.setFloat(event->TaskIndex, i, -1);
 
-    if (i > 0) { delay(10); } // dem Modul Zeit zwischen zwei Übertragungen lassen
+    if (i > 0) { delay(10); } // give the module time between two transmissions
     p158_writeChannel(P158_I2C_ADDR, i, 0);
   }
 }

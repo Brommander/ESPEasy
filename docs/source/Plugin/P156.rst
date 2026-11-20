@@ -84,10 +84,10 @@ rules (``[Inverter#Power]``) and as prefix for the commands.
 
 **Enabled** The device can be enabled or disabled.
 
-Connection (Verbindung)
-^^^^^^^^^^^^^^^^^^^^^^^
+Connection
+^^^^^^^^^^
 
-**IPv4 Adresse** IP address of the Modbus device. Give the device a fixed IP
+**IPv4 Address** IP address of the Modbus device. Give the device a fixed IP
 address (DHCP reservation in the router).
 
 **Port** TCP port of the Modbus server. The standard port is 502; some devices use
@@ -97,8 +97,8 @@ a different one (e.g. Kostal: 1502).
 any value, others only one specific value (e.g. Kostal: 71). Gateways that
 forward to Modbus RTU use it to select the RTU slave.
 
-Pause groups (Pause-Gruppen)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Pause Groups
+^^^^^^^^^^^^
 
 Each value belongs to one of four pause groups. The pause time of the group is
 the interval in which the value is read (or written). Fast values (power) and
@@ -108,10 +108,10 @@ slow values (energy counters) can thus be polled at different rates in one task.
   :header: "Group", "Default", "Resolution", "Maximum"
   :widths: 6, 8, 8, 8
 
-  "Gruppe 1", "200 ms", "100 ms", "25500 ms"
-  "Gruppe 2", "1000 ms", "100 ms", "25500 ms"
-  "Gruppe 3", "10000 ms", "1000 ms", "255 s"
-  "Gruppe 4", "60000 ms", "1000 ms", "255 s"
+  "Group 1", "200 ms", "100 ms", "25500 ms"
+  "Group 2", "1000 ms", "100 ms", "25500 ms"
+  "Group 3", "10000 ms", "1000 ms", "255 s"
+  "Group 4", "60000 ms", "1000 ms", "255 s"
 
 Only one request is on the wire at any time. Choose the pause times not shorter
 than needed: every request costs time on the ESP and on the device.
@@ -130,30 +130,30 @@ If the device rejects a block (for example because registers in a gap are not
 defined), the task reads its values one by one from then on. The status block
 in the task settings shows the number of requests and values read.
 
-Values 1-4 (Abfragen)
-^^^^^^^^^^^^^^^^^^^^^
+Values 1-4
+^^^^^^^^^^
 
 For each of the four values:
 
-**Registeradresse** PDU address 1-65535, see `Basics: Modbus addressing`_.
+**Register Address** PDU address 1-65535, see `Basics: Modbus addressing`_.
 0 = value not used.
 
-**Funktionscode** What the plugin does with this value:
+**Function Code** What the plugin does with this value:
 
 .. csv-table::
   :header: "Selection", "Modbus function", "Direction"
   :widths: 20, 15, 25
 
-  "03 - Holding Register lesen", "03 Read Holding Registers", "Device → task value"
-  "04 - Input Register lesen", "04 Read Input Registers", "Device → task value"
-  "06 - Register schreiben (16 Bit)", "06 Write Single Register", "Task value → device, cyclic"
-  "16 - Register schreiben (16/32 Bit, Float)", "16 Write Multiple Registers", "Task value → device, cyclic"
+  "03 - Read Holding Registers", "03 Read Holding Registers", "Device → task value"
+  "04 - Read Input Registers", "04 Read Input Registers", "Device → task value"
+  "06 - Write Single Register (16 bit)", "06 Write Single Register", "Task value → device, cyclic"
+  "16 - Write Multiple Registers (16/32 bit, float)", "16 Write Multiple Registers", "Task value → device, cyclic"
 
 Which read function is correct is stated in the device manual (holding or input
 register). Some devices answer both. If the device answers with exception 1
 (illegal function) or 2 (illegal address), try the other function.
 
-**Datentyp** Format of the register content:
+**Data Type** Format of the register content:
 
 .. csv-table::
   :header: "Data type", "Registers", "Description"
@@ -172,7 +172,7 @@ The word order differs between manufacturers. If a 32-bit value shows
 nonsense (e.g. huge numbers, or the value jumps by 65536), use the WS variant,
 or change the byte-order setting in the device if it has one.
 
-**Pause-Gruppe** Pause group of this value (see above).
+**Pause Group** Pause group of this value (see above).
 
 Scaling
 ^^^^^^^
